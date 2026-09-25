@@ -1,0 +1,457 @@
+﻿import test from "node:test";
+import assert from "node:assert/strict";
+import { Store } from "../server/store.mjs";
+import { Core } from "../server/core.mjs";
+const passphrase = "a long test-only passphrase";
+function fixture() {
+  const s = new Store(":memory:"),
+    c = new Core(s);
+  const owner = c.public("owner_setup", {
+    passphrase,
+    confirm: passphrase,
+  }).token;
+  const call = (action, b = {}) => c.ownerAction(action, b, owner);
+  const pair = (agentId) => {
+    const code = call("create_pairing_code", { agentId }).code;
+    const credential = c.public("redeem_pairing_code", {
+      code,
+      runtime_id: `hermes-${agentId}`,
+    }).credential;
+    const act = (action, b = {}) => c.agentAction(action, b, credential);
+    act("report_heartbeat", {
+      agent_id: agentId,
+      runtime_id: `hermes-${agentId}`,
+      sequence: 0,
+      status: "idle",
+      last_seen: new Date().toISOString(),
+      capabilities: ["work.execute"],
+    });
+    return { act, credential };
+  };
+  const jeff = pair("jeff");
+  const create = () =>
+    call("create_work_item", {
+      title: "Verified mission",
+      brief: "Read BIS context and return evidence",
+      priority: "normal",
+      goalId: "monthly",
+      raci: {
+        responsible: ["jeff"],
+        accountable: "matt",
+        consulted: ["relay"],
+        informed: ["jev"],
+      },
+    }).id;
+  const dispatch = (workId) =>
+    call("dispatch_work_item", {
+      id: workId,
+      revision: s.get("work", workId).revision,
+      agentId: "jeff",
+      idempotency_key: `dispatch:${workId}`,
+    });
+  return { s, c, owner, call, pair, jeff, create, dispatch };
+}
+test("owner auth, setup single use, private snapshot and logout", () => {
+  const f = fixture();
+  assert.throws(() => f.c.ownerAction("get_dashboard", {}, ""), /Sign in/);
+  assert.throws(
+    () => f.c.public("owner_setup", { passphrase, confirm: passphrase }),
+    /already configured/,
+  );
+  assert.throws(
+    () => f.c.public("owner_login", { passphrase: "wrong long passphrase" }),
+    /Incorrect/,
+  );
+  const snapshot = f.call("get_dashboard");
+  assert.equal(snapshot.agents.length, 4);
+  assert(!JSON.stringify(snapshot).includes(f.jeff.credential));
+  assert(!JSON.stringify(snapshot).includes("credentialHash"));
+  f.call("owner_logout");
+  assert.throws(() => f.call("get_dashboard"), /Sign in/);
+  f.s.close();
+});
+test("dispatch is idempotent and command/run/work states are distinct", () => {
+  const f = fixture(),
+    w = f.create(),
+    command = f.dispatch(w);
+  assert.equal(f.dispatch(w).id, command.id);
+  assert.equal(f.s.get("work", w).status, "ready");
+  assert.equal(f.s.list("run").length, 0);
+  const accepted = f.jeff.act("ack_command", {
+    command_id: command.id,
+    status: "accepted",
+  });
+  assert.equal(f.s.get("work", w).status, "claimed");
+  assert.equal(f.s.list("run").length, 1);
+  assert.equal(
+    f.jeff.act("ack_command", { command_id: command.id, status: "accepted" })
+      .id,
+    command.id,
+  );
+  f.jeff.act("ack_command", {
+    command_id: command.id,
+    status: "running",
+    run_id: accepted.runId,
+  });
+  assert.equal(f.s.get("work", w).status, "in_progress");
+  f.jeff.act("submit_artifact", {
+    run_id: accepted.runId,
+    idempotency_key: "artifact-one",
+    title: "Evidence",
+    uri: "https://example.com/evidence",
+  });
+  f.jeff.act("ack_command", {
+    command_id: command.id,
+    status: "completed",
+    run_id: accepted.runId,
+    result: "Evidence delivered",
+  });
+  assert.equal(f.s.get("work", w).status, "waiting_approval");
+  const a = f.s.list("approval")[0];
+  f.call("resolve_approval", {
+    id: a.id,
+    decision: "approved",
+    note: "Evidence inspected",
+  });
+  assert.equal(f.s.get("work", w).status, "done");
+  assert.throws(() => f.s.db.exec("DELETE FROM audit"), /immutable/);
+  f.s.close();
+});
+test("cannot skip acknowledgments, impersonate agent, or approve as agent", () => {
+  const f = fixture(),
+    relay = f.pair("relay"),
+    w = f.create(),
+    command = f.dispatch(w);
+  assert.throws(
+    () =>
+      f.jeff.act("ack_command", {
+        command_id: command.id,
+        status: "completed",
+      }),
+    /separately/,
+  );
+  assert.throws(
+    () =>
+      relay.act("ack_command", { command_id: command.id, status: "accepted" }),
+    /another agent/,
+  );
+  assert.throws(
+    () => f.jeff.act("resolve_approval", {}),
+    /Unknown agent action/,
+  );
+  assert.throws(
+    () =>
+      f.jeff.act("report_heartbeat", {
+        agent_id: "relay",
+        runtime_id: "hermes-jeff",
+        sequence: 1,
+        status: "idle",
+        last_seen: new Date().toISOString(),
+      }),
+    /Identity mismatch/,
+  );
+  f.s.close();
+});
+test("expired leases block recovery and cannot be renewed or completed late", () => {
+  const f = fixture(),
+    w = f.create(),
+    command = f.dispatch(w),
+    ack = f.jeff.act("ack_command", {
+      command_id: command.id,
+      status: "accepted",
+    });
+  const run = f.s.get("run", ack.runId);
+  run.leaseUntil = "2000-01-01T00:00:00Z";
+  f.s.put("run", run);
+  f.c.recover();
+  assert.equal(f.s.get("work", w).status, "blocked");
+  assert.equal(f.s.get("command", command.id).status, "expired");
+  assert.throws(
+    () =>
+      f.jeff.act("ack_command", { command_id: command.id, status: "running" }),
+    /terminal/,
+  );
+  f.s.close();
+});
+test("pairing one use, ten-minute expiry, immediate revocation", () => {
+  const f = fixture();
+  const code = f.call("create_pairing_code", { agentId: "jeff" }).code;
+  assert.throws(() => f.jeff.act("poll_commands"), /revoked/);
+  f.c.public("redeem_pairing_code", { code, runtime_id: "new" });
+  assert.throws(
+    () => f.c.public("redeem_pairing_code", { code, runtime_id: "new" }),
+    /already used/,
+  );
+  const next = f.call("create_pairing_code", { agentId: "jeff" });
+  for (const p of f.s.list("pairing")) f.s.put("pairing", { ...p, expires: 0 });
+  assert.throws(
+    () =>
+      f.c.public("redeem_pairing_code", { code: next.code, runtime_id: "new" }),
+    /expired/,
+  );
+  f.s.close();
+});
+test("owner office presets duplicate a validated design between agents", () => {
+  const f = fixture();
+  const design = structuredClone(f.call("get_dashboard").themes.cozy_den);
+  const presetId = f.call("save_office_preset", { name: "Warm studio", design }).id;
+  assert.equal(f.call("get_dashboard").officePresets[0].name, "Warm studio");
+  const relay = f.s.get("agent", "relay");
+  f.call("apply_office_preset", {
+    presetId,
+    agentId: "relay",
+    revision: relay.revision,
+  });
+  assert.deepEqual(f.s.get("agent", "relay").ownerDesign, design);
+  assert.throws(() => f.call("apply_office_preset", {
+    presetId, agentId: "relay", revision: relay.revision,
+  }), /changed/);
+  f.call("delete_office_preset", { id: presetId });
+  assert.equal(f.call("get_dashboard").officePresets.length, 0);
+  f.s.close();
+});
+test("saved operational views are durable and validate filters", () => {
+  const f = fixture();
+  const id = f.call("save_operational_view", { name: "Needs me", filter: "needs_owner" }).id;
+  assert.deepEqual(f.call("get_dashboard").savedViews.map((v) => v.name), ["Needs me"]);
+  assert.throws(() => f.call("save_operational_view", { name: "Other", filter: "invented" }));
+  f.call("delete_operational_view", { id });
+  assert.equal(f.call("get_dashboard").savedViews.length, 0);
+  f.s.close();
+});
+test("verified budget usage is idempotent and a hard limit blocks dispatch", () => {
+  const f = fixture();
+  const workId = f.create();
+  const budgetId = f.call("save_budget", {
+    name: "BIS testing", scope: "organization", scopeId: "bis",
+    unit: "USD", period: "monthly", softLimit: 5, hardLimit: 10,
+  }).id;
+  const usage = {
+    budgetId, amount: 10, note: "Verified provider invoice",
+    idempotency_key: "budget-test-usage-1",
+  };
+  f.call("record_budget_usage", usage);
+  assert.equal(f.call("record_budget_usage", usage).duplicate, true);
+  assert.equal(f.call("get_dashboard").budgets[0].used, 10);
+  assert.throws(() => f.dispatch(workId), /Budget hard limit reached/);
+  assert.throws(() => f.call("delete_budget", { id: budgetId }), /recorded usage/);
+  f.s.close();
+});
+test("office strict validation, owner precedence and stale write protection", () => {
+  const f = fixture();
+  const d = {
+    version: 1,
+    theme: "cozy_den",
+    palette: "warm",
+    placements: [{ slot: "primary_desk", asset_id: "kenney.desk" }],
+  };
+  f.call("save_office_design", { agentId: "jeff", revision: 0, design: d });
+  assert.throws(
+    () =>
+      f.call("save_office_design", { agentId: "jeff", revision: 0, design: d }),
+    /changed/,
+  );
+  assert.throws(() =>
+    f.call("save_office_design", {
+      agentId: "jeff",
+      revision: 1,
+      design: { ...d, evil: true },
+    }),
+  );
+  assert.throws(() =>
+    f.call("save_office_design", {
+      agentId: "jeff",
+      revision: 1,
+      design: {
+        ...d,
+        placements: [{ slot: "task_chair", asset_id: "kenney.desk" }],
+      },
+    }),
+  );
+  f.jeff.act("report_heartbeat", {
+    agent_id: "jeff",
+    runtime_id: "hermes-jeff",
+    sequence: 1,
+    status: "idle",
+    last_seen: new Date().toISOString(),
+    office_design: { ...d, theme: "neutral" },
+  });
+  assert.equal(
+    f.call("get_dashboard").agents.find((a) => a.id === "jeff").effectiveDesign
+      .theme,
+    "cozy_den",
+  );
+  f.s.close();
+});
+test("global stop, policy gate, stale RACI and BIS scope", () => {
+  const f = fixture(),
+    w = f.create();
+  assert.throws(
+    () => f.call("set_work_raci", { id: w, revision: 7, raci: {} }),
+    /changed/,
+  );
+  f.call("global_stop", { stopped: true });
+  assert.throws(() => f.dispatch(w), /stopped/);
+  f.call("global_stop", { stopped: false });
+  const record = f.s.get("work", w);
+  record.action = "publish";
+  f.s.put("work", record);
+  assert.throws(() => f.dispatch(w), /approval/);
+  assert.throws(
+    () =>
+      f.call("link_cognition_record", {
+        workId: w,
+        scope: "personal",
+        uri: "https://example.com",
+      }),
+    /BIS/,
+  );
+  f.s.close();
+});
+test("private messages have explicit queued, delivered, acknowledged and replied states", () => {
+  const f = fixture();
+  const m = f.call("send_agent_message", {
+    agentId: "jeff",
+    body: "A private instruction",
+  });
+  assert.equal(f.s.get("message", m.id).status, "queued");
+  const c = f.jeff.act("poll_commands")[0];
+  f.jeff.act("ack_command", { command_id: c.id, status: "accepted" });
+  assert.equal(f.s.get("message", m.id).status, "delivered");
+  f.jeff.act("ack_command", { command_id: c.id, status: "running" });
+  assert.equal(f.s.get("message", m.id).status, "acknowledged");
+  f.jeff.act("reply_message", { id: m.id, body: "Received" });
+  assert.equal(f.s.get("message", m.id).status, "replied");
+  f.s.close();
+});
+test("handoff preserves accountability and changes ownership only on destination completion", () => {
+  const f = fixture(),
+    relay = f.pair("relay"),
+    w = f.create();
+  const h = f.jeff.act("request_handoff", {
+    workId: w,
+    to: "relay",
+    context: "BIS reference and evidence",
+    idempotency_key: "handoff-test",
+  });
+  f.call("accept_handoff", { id: h.id, accept: true });
+  assert.deepEqual(f.s.get("work", w).raci.responsible, ["jeff"]);
+  const command = relay.act("poll_commands")[0];
+  for (const status of ["accepted", "running", "completed"])
+    relay.act("ack_command", { command_id: command.id, status });
+  assert.deepEqual(f.s.get("work", w).raci.responsible, ["relay"]);
+  assert.equal(f.s.get("work", w).raci.accountable, "matt");
+  f.s.close();
+});
+test("expired delivery and handoff release pending state without transferring ownership", () => {
+  const f = fixture();
+  f.pair("relay");
+  const w = f.create();
+  const m = f.call("send_agent_message", { agentId: "jeff", body: "Pending note" });
+  const h = f.jeff.act("request_handoff", {
+    workId: w, to: "relay", context: "Review context", idempotency_key: "expired-handoff",
+  });
+  f.call("accept_handoff", { id: h.id, accept: true });
+  for (const c of f.s.active("command")) {
+    c.expiresAt = new Date(Date.now() - 1000).toISOString();
+    f.s.put("command", c);
+  }
+  f.c.recover();
+  assert.equal(f.s.get("message", m.id).status, "expired");
+  assert.equal(f.s.get("handoff", h.id).status, "expired");
+  assert.equal(f.s.get("work", w).transferPending, undefined);
+  assert.deepEqual(f.s.get("work", w).raci.responsible, ["jeff"]);
+  assert.equal(f.s.get("work", w).status, "blocked");
+  f.s.close();
+});
+test("a fresh idempotency key cannot create duplicate queued execution", () => {
+  const f = fixture(),
+    w = f.create();
+  f.dispatch(w);
+  assert.throws(
+    () =>
+      f.call("dispatch_work_item", {
+        id: w,
+        revision: f.s.get("work", w).revision,
+        agentId: "jeff",
+        idempotency_key: "a-new-key-for-same-work",
+      }),
+    /pending command/,
+  );
+  assert.equal(f.s.active("command").filter((c) => c.workId === w).length, 1);
+  f.s.close();
+});
+test("redirection invalidates old policy approval and queues a fresh review", () => {
+  const f = fixture();
+  const w = f.call("create_work_item", {
+    title: "Publish a result",
+    brief: "Publish approved BIS work",
+    priority: "normal",
+    goalId: "monthly",
+    action: "publish",
+    raci: {
+      responsible: ["jeff"],
+      accountable: "matt",
+      consulted: [],
+      informed: [],
+    },
+  }).id;
+  const old = f.s.list("approval")[0];
+  f.call("resolve_approval", {
+    id: old.id,
+    decision: "approved",
+    note: "Original brief approved",
+  });
+  f.call("edit_work_item", {
+    id: w,
+    revision: 0,
+    title: "Changed result",
+    brief: "Different publication context",
+    priority: "high",
+  });
+  assert.throws(() => f.dispatch(w), /approval/);
+  assert(
+    f.s
+      .list("approval")
+      .some((a) => a.status === "waiting" && a.workRevision === 1),
+  );
+  f.s.close();
+});
+test("project registration opens a project and only verified milestones advance it", () => {
+  const f = fixture();
+  const b = f.call("register_building", {
+    name: "Launch",
+    kind: "project_site",
+    agentId: "unused",
+    style: "workshop",
+    goalId: "monthly",
+  }).id;
+  assert(!f.s.get("building", b).agentId);
+  f.call("add_milestone", {
+    id: b,
+    revision: 0,
+    title: "Owner-reviewed launch plan",
+  });
+  const m = f.s.get("building", b).milestones[0];
+  assert.equal(m.status, "open");
+  assert.throws(
+    () =>
+      f.call("close_milestone", {
+        id: b,
+        revision: 0,
+        milestoneId: m.id,
+        evidence: "https://example.com",
+        note: "Reviewed",
+      }),
+    /changed/,
+  );
+  f.call("close_milestone", {
+    id: b,
+    revision: 1,
+    milestoneId: m.id,
+    evidence: "https://example.com",
+    note: "Reviewed",
+  });
+  assert.equal(f.s.get("building", b).milestones[0].status, "closed");
+  f.s.close();
+});

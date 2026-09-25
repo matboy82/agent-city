@@ -1,0 +1,12 @@
+﻿services:
+  crew:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4310:4310"
+    volumes:
+      - crew-data:/data
+    environment:
+      CREW_ORIGIN: ${CREW_ORIGIN:-http://localhost:4310}
+volumes:
+  crew-data:
