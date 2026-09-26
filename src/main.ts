@@ -151,6 +151,7 @@ function sceneKey() {
       dusk,
       reduced,
       a?.connection,
+      a?.status,
       a?.activity,
       a?.currentTask,
       a?.name,
@@ -158,6 +159,7 @@ function sceneKey() {
       a?.officePositions,
       a?.designSource,
       a?.revision,
+      data.runs.filter((r: Row) => r.agentId === selected).map((r: Row) => [r.id, r.status]),
       data.work.filter((w: Row) => w.raci.responsible.includes(selected))
         .length,
     ]);
@@ -186,6 +188,10 @@ function sceneKey() {
       data.runs.filter((r: Row) => r.status === "running").length,
       data.messages.filter((m: Row) => m.scope === "team").length,
       data.commands.filter((c: Row) => c.status === "queued").length,
+      data.artifacts.map((a: Row) => [a.id, a.createdAt]),
+      data.handoffs.map((h: Row) => [h.id, h.status]),
+      data.agents.map((a: Row) => [a.id, a.connection, a.status, a.activity, a.currentTask]),
+      data.runs.map((r: Row) => [r.id, r.agentId, r.status]),
     ]);
   return "";
 }
@@ -287,7 +293,7 @@ function activityControls() {
   return `<div class="actions operational-filters">${operationalFilters.map(([id, title]) => button(title, "activity-filter", `data-filter="${id}" aria-pressed="${activityFilter === id}"`, activityFilter === id ? "primary" : "")).join("")}${button("Save this view", "save-view")}</div><div class="actions saved-views">${(data.savedViews || []).map((v: Row) => `${button(e(v.name), "activity-filter", `data-filter="${e(v.filter)}"`)}${button("×", "delete-view", `data-id="${e(v.id)}" aria-label="Delete saved view ${e(v.name)}"`)}`).join("")}</div>`;
 }
 function city() {
-  return `${heading("YOUR OPERATING WORLD", "Good to see you, Matt.", "A place for your crew. A clear view of what comes next.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}<div class="city-layout"><section class="world-card"><div class="world-title"><div><span class="eyebrow">BIS CAMPUS</span><h2>A world built around your work.</h2><div class="office-name-actions">${button(cityEditing ? "Stop editing city" : "Edit city", "toggle-city-edit", `aria-pressed="${cityEditing}"`)}</div></div><span class="live-label"><i></i> LIVE STATE</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Interactive BIS city. Equivalent building buttons below."></canvas><div class="world-loading" id="world-loading">Preparing your campus…</div></div>${cityEditing ? cityEditor() : ""}<div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D campus" : "2D view", "flat")}<span>Drag to orbit · Scroll to explore</span></div><div class="building-strip">${button("BIS HQ " + icon("arrow"), "nav", 'data-view="hq"', "hq-building")}${data.buildings.map((b: Row) => button(e(b.name), "building", `data-id="${e(b.id)}"`)).join("")}</div></section></div>`;
+  return `${heading("YOUR OPERATING WORLD", "Good to see you, Matt.", "A place for your crew. A clear view of what comes next.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}<div class="city-layout ${cityEditing ? "editing-city" : ""}"><section class="world-card"><div class="world-title"><div><span class="eyebrow">BIS CAMPUS</span><h2>A world built around your work.</h2><div class="office-name-actions">${button(cityEditing ? "Stop editing city" : "Edit city", "toggle-city-edit", `aria-pressed="${cityEditing}"`)}</div></div><span class="live-label"><i></i> LIVE STATE</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Interactive BIS city. Equivalent building buttons below."></canvas><div class="world-loading" id="world-loading">Preparing your campus…</div></div><div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D campus" : "2D view", "flat")}<span>Drag to orbit · Scroll to explore</span></div><div class="building-strip">${button("BIS HQ " + icon("arrow"), "nav", 'data-view="hq"', "hq-building")}${data.buildings.map((b: Row) => button(e(b.name), "building", `data-id="${e(b.id)}"`)).join("")}</div></section>${cityEditing ? cityEditor() : ""}</div>`;
 }
 function briefDock() {
   return `<aside class="brief-dock" id="brief-dock" aria-label="Floating morning brief"><div class="brief-dock-handle" id="brief-dock-handle"><strong>Morning Brief</strong><span>Drag to move</span>${button("×", "toggle-brief-dock", 'aria-label="Close brief panel"')}</div><div class="brief-dock-body"><div class="brief-dock-stats"><span><strong>${pending().length}</strong> need you</span><span><strong>${data.queue.length}</strong> queued</span></div><h3>Waiting on you</h3>${reviewCards(1)}<h3>Next on the agenda</h3>${
@@ -554,7 +560,7 @@ function budgetPanel() {
   }</div></section>`;
 }
 function settings() {
-  return `${heading("WORKSPACE", "Make it yours.", "BIS · America/Denver · portable, persistent storage")}<div class="lower-grid"><section class="panel"><h2>Experience</h2><div class="setting"><span>Lighting<small>Bright day or a quieter dusk</small></span>${button(dusk ? "Dusk" : "Day", "dusk")}</div><div class="setting"><span>Graphics<small>All operational controls work in 2D</small></span>${button(flat ? "2D interface" : "3D world", "flat")}</div><div class="setting"><span>Reduced motion<small>Keep state. Reduce movement.</small></span>${button(reduced ? "On" : "Off", "motion")}</div><h2 class="spaced">Owner access</h2><p class="muted">Sessions expire after 12 hours. Your passphrase has no reset flow.</p>${button("Sign out", "logout")}</section><section class="panel"><h2>Morning synchronization</h2><p>Daily at 5:55 AM America/Denver. Source refresh runs on the server without an open browser.</p><p class="muted">Configure read-only Google Calendar and GitHub access on the server.</p>${button("Refresh now", "sync", "", "primary")}<pre>${e(JSON.stringify(data.sync || { status: "unconfigured" }, null, 2))}</pre></section></div><section class="panel spaced"><div class="section-title"><h2>Routines</h2>${button("Add routine", "routine")}</div>${data.routines.map((r: Row) => `<div class="queue-row"><strong>${e(r.title)}</strong><span>${e(r.time)} Denver · ${r.enabled ? "Enabled" : "Disabled"} · ${e(r.lastResult || "Not run")}</span>${button(r.enabled ? "Pause" : "Enable", "pause-routine", `data-id="${e(r.id)}"`)}</div>`).join("") || '<p class="muted">No recurring work. Routines create planned work for owner dispatch.</p>'}</section><section class="panel spaced"><h2>Assets & credits</h2><p>Furniture Kit and Space Kit by <a href="https://kenney.nl/assets" target="_blank" rel="noopener">Kenney</a> · CC0. Supplied Jeff and Relay portraits; Relay’s new GLB is modeled from her portrait. Other character bodies came from the Crew OS experiment.</p><div class="credit-grid">${Object.values(
+  return `${heading("WORKSPACE", "Make it yours.", "BIS · America/Denver · portable, persistent storage")}<div class="lower-grid"><section class="panel"><h2>Experience</h2><div class="setting"><span>Lighting<small>Bright day or a quieter dusk</small></span>${button(dusk ? "Dusk" : "Day", "dusk")}</div><div class="setting"><span>Graphics<small>All operational controls work in 2D</small></span>${button(flat ? "2D interface" : "3D world", "flat")}</div><div class="setting"><span>Reduced motion<small>Keep state. Reduce movement.</small></span>${button(reduced ? "On" : "Off", "motion")}</div><h2 class="spaced">Owner access</h2><p class="muted">Sessions expire after 12 hours. Your passphrase has no reset flow.</p>${button("Sign out", "logout")}</section><section class="panel"><h2>Morning synchronization</h2><p>Daily at 5:55 AM America/Denver. Source refresh runs on the server without an open browser.</p><p class="muted">Configure read-only Google Calendar and GitHub access on the server.</p>${button("Refresh now", "sync", "", "primary")}<pre>${e(JSON.stringify(data.sync || { status: "unconfigured" }, null, 2))}</pre></section></div><section class="panel spaced"><div class="section-title"><h2>Routines</h2>${button("Add routine", "routine")}</div>${data.routines.map((r: Row) => `<div class="queue-row"><strong>${e(r.title)}</strong><span>${e(r.time)} Denver · ${r.enabled ? "Enabled" : "Disabled"} · ${e(r.lastResult || "Not run")}</span>${button(r.enabled ? "Pause" : "Enable", "pause-routine", `data-id="${e(r.id)}"`)}</div>`).join("") || '<p class="muted">No recurring work. Routines create planned work for owner dispatch.</p>'}</section><section class="panel spaced"><h2>Assets & credits</h2><p>Furniture Kit and Space Kit by <a href="https://kenney.nl/assets" target="_blank" rel="noopener">Kenney</a> · CC0. Campus street lights, rooftop equipment and HQ console from <a href="https://quaternius.com/packs/cyberpunkgamekit.html" target="_blank" rel="noopener">Quaternius Cyberpunk Game Kit</a> · CC0. Jeff and Relay use supplied portraits and locally authored full-body models; Jefferson and Jev retain their existing experimental assets.</p><div class="credit-grid">${Object.values(
     data.catalog,
   )
     .map(
@@ -1713,12 +1719,7 @@ document.addEventListener("click", async (ev) => {
                   ["agent_hq", "Agent HQ"],
                 ],
           ) +
-          input(
-            "agentId",
-            "New agent ID (used for agent HQ)",
-            "text",
-            "new-agent",
-          ) +
+          (id ? "" : '<label id="agent-id-field" hidden>New agent ID<input name="agentId" type="text" pattern="[a-z][a-z0-9_-]{1,39}" minlength="2" maxlength="40" disabled><small>Only needed when creating an agent HQ.</small></label>') +
           select("style", "Architecture by work type", buildingStyles) +
           select("model", "Building model", buildingModels) +
           select(
@@ -1733,6 +1734,18 @@ document.addEventListener("click", async (ev) => {
           });
         },
       );
+      const kind = document.querySelector<HTMLSelectElement>('#dialog-form select[name="kind"]');
+      const agentId = document.querySelector<HTMLInputElement>('#dialog-form input[name="agentId"]');
+      if (kind && agentId) {
+        const updateAgentId = () => {
+          const needed = kind.value === "agent_hq";
+          agentId.closest("label")!.hidden = !needed;
+          agentId.disabled = !needed;
+          agentId.required = needed;
+        };
+        kind.addEventListener("change", updateAgentId);
+        updateAgentId();
+      }
       return;
     }
     if (action === "building-edit") {

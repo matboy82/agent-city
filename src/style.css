@@ -1689,7 +1689,7 @@ legend {
 .hq-world .world-stage,
 .hq-world #world {
   min-height: 330px;
-  height: 330px;
+  height: clamp(360px, 53dvh, 520px);
 }
 .queue-group {
   display: block;
@@ -1741,6 +1741,29 @@ legend {
 }
 .city-layout > .world-card {
   height: max(620px, calc(100dvh - 245px));
+}
+.city-layout.editing-city > .world-card {
+  height: auto;
+  min-height: 0;
+}
+.city-layout.editing-city .world-stage {
+  height: clamp(320px, 45dvh, 510px);
+  min-height: 0;
+  flex: none;
+}
+.city-layout.editing-city > .city-editor {
+  margin: 14px 0 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.city-layout.editing-city > .world-card.expanded-viewer {
+  height: 100dvh;
+}
+.city-layout.editing-city > .world-card.expanded-viewer .world-stage {
+  height: auto;
+  flex: 1;
+}
+label[hidden] {
+  display: none;
 }
 .city-layout .world-card {
   position: relative;
@@ -1907,6 +1930,9 @@ legend {
 }
 @media (max-width: 700px) {
   .position-editor {
+    grid-template-columns: 1fr;
+  }
+  .city-layout.editing-city > .city-editor {
     grid-template-columns: 1fr;
   }
   .position-editor > .row {

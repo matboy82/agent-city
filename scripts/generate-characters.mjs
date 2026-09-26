@@ -376,7 +376,10 @@ function createRelayCharacter() {
   return root;
 }
 
-const characters = [{ id: "relay" }];
+const characters = [
+  { id: "jeff", species: "otter", fur: 0xa7653f, clothing: 0x15334e, accent: 0x3ad0ba },
+  { id: "relay" },
+];
 
 await mkdir(outputDir, { recursive: true });
 const exporter = new GLTFExporter();

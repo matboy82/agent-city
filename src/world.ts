@@ -1,7 +1,7 @@
 ﻿import { Engine } from "@babylonjs/core/Engines/engine";
 import { Scene } from "@babylonjs/core/scene";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
-import { Vector3, Color3, Color4 } from "@babylonjs/core/Maths/math";
+import { Vector3, Color3, Color4, Matrix } from "@babylonjs/core/Maths/math";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
@@ -90,7 +90,7 @@ export async function mountWorld(
   const { data, agent, dusk, onSelect, onError } = opts;
   let disposed = false;
   const mobile = innerWidth < 700;
-  let initialRadius = agent ? 17 : mobile && !opts.headquarters ? 42 : 35;
+  let initialRadius = agent ? 17 : mobile && !opts.headquarters ? 40 : 30;
   let cityCenterZ = 0;
   const engine = new Engine(canvas, true, {
     preserveDrawingBuffer: false,
@@ -183,6 +183,10 @@ export async function mountWorld(
     m.position.set(x, y, z);
     m.material = mat;
     m.receiveShadows = true;
+    if (!mobile && shadowCount < 12 && /cantilever roof|roof cap|upper volume|main shell|HQ podium|room canopy/.test(name)) {
+      shadows.addShadowCaster(m);
+      shadowCount++;
+    }
     return m;
   };
   let shadowCount = 0;
@@ -658,9 +662,9 @@ export async function mountWorld(
     }
     return height;
   }
-  function buildingVariant(name: string, x: number, z: number, kind: string, selectId: string, lift = 0) {
+  function buildingVariant(name: string, x: number, z: number, kind: string, selectId: string, lift = 0, parent?: TransformNode) {
     const part = (title: string, dx: number, y: number, dz: number, w: number, h: number, d: number, mat: StandardMaterial) => {
-      const mesh = box(`${name} ${title}`, x + dx, y + lift, z + dz, w, h, d, mat);
+      const mesh = box(`${name} ${title}`, x + dx, y + (parent ? 0 : lift), z + dz, w, h, d, mat);
       mesh.metadata = { selectId };
       return mesh;
     };
@@ -690,6 +694,7 @@ export async function mountWorld(
         part("office entrance canopy", 0, 1.9, depth / 2 + 0.6, 3.2, 0.18, 1.4, white);
         part("roof equipment", -1.5, 4.65, -0.8, 1.2, 0.5, 1.1, dark);
       }
+      tasks.push(model("/assets/cyberpunk/AC.glb", [x + width * 0.2, lift + 1.76 + floors * 0.68, z - 0.5], 0.42, "height", 0, selectId).then((item) => { if (item && parent) item.setParent(parent); }));
       return;
     }
     const warehouse = kind === "warehouse";
@@ -710,6 +715,7 @@ export async function mountWorld(
       for (const dx of [-2, 2]) part("roof skylight", dx, 3.62, -0.5, 1.3, 0.08, 2.1, glass);
       part("dock ramp", 0, 0.3, depth / 2 + 0.75, 5.6, 0.2, 1.3, stone);
     }
+    tasks.push(model("/assets/cyberpunk/AC.glb", [x - 1.8, lift + 3.58, z - 0.7], 0.4, "height", 0, selectId).then((item) => { if (item && parent) item.setParent(parent); }));
   }
   const tasks: Promise<unknown>[] = [];
   const officeItems = new Map<string, TransformNode>();
@@ -722,10 +728,24 @@ export async function mountWorld(
   let featurePedestal: ReturnType<typeof box> | null = null;
   let seatedPose = false;
   if (opts.headquarters) {
-    camera.radius = 23;
-    camera.target = new Vector3(0, 0, 0);
+    initialRadius = 16;
+    camera.radius = 16;
+    camera.fov = 0.56;
+    camera.target = new Vector3(0, 0.65, 0);
     box("HQ floor", 0, -0.2, 0, 17, 0.4, 12, white);
     box("HQ foundation", 0, -0.48, 0, 17.3, 0.2, 12.3, navy);
+    const hqGlass = box("HQ rear glass", 0, 2.02, -5.92, 16.6, 3.75, 0.1, facadeGlass);
+    scene.onBeforeRenderObservable.add(() => { hqGlass.visibility = camera.position.z < 0 ? 0.04 : 0.18; });
+    box("HQ rear sill", 0, 0.2, -5.8, 16.8, 0.25, 0.35, white);
+    box("HQ rear lintel", 0, 3.98, -5.82, 17.1, 0.22, 0.42, white);
+    for (const x of [-8.2, -4.1, 0, 4.1, 8.2])
+      box("HQ structural pier", x, 2.0, -5.79, 0.18, 3.9, 0.28, white);
+    box("HQ upper beam", 0, 4.16, -5.82, 17.1, 0.16, 0.38, white);
+    box("HQ blue reveal", 0, 4.02, -5.67, 16.7, 0.035, 0.18, blue);
+    for (const x of [-8.1, 8.1])
+      box("HQ side canopy", x, 3.95, 0.25, 0.18, 0.18, 11.7, white);
+    box("HQ central aisle", 0, 0.02, 0, 1.1, 0.025, 10.8, pathMat);
+    for (const x of [-0.55, 0.55]) box("HQ aisle channel", x, 0.045, 0, 0.045, 0.025, 10.5, blue);
     const zones = [
       ["missions", "MISSION TABLE", -5, -3],
       ["dispatch", "DISPATCH", 0, -3],
@@ -734,6 +754,8 @@ export async function mountWorld(
       ["team", "COLLABORATION", 0, 3],
       ["review", "REVIEW ROOM", 5, 3],
     ] as const;
+    const completedHandoffs = data.handoffs.filter((h: Row) => h.status === "completed");
+    const pendingReviews = data.approvals.filter((a: Row) => a.status === "waiting").length;
     for (const [zone, title, baseX, baseZ] of zones) {
       const offset = data.hq?.zones?.[zone] || [0, 0, 0];
       const x = baseX + offset[0], z = baseZ + offset[2], y = offset[1];
@@ -743,6 +765,11 @@ export async function mountWorld(
       table.metadata = { selectId: "zone:" + zone };
       const base = box("table base", x, 0.4 + y, z, 1, 0.7, 0.7, white);
       base.metadata = { selectId: "zone:" + zone };
+      const prop = (name: string, dx: number, dy: number, dz: number, w: number, h: number, d: number, mat: StandardMaterial) => {
+        const item = box(name, x + dx, y + dy, z + dz, w, h, d, mat);
+        item.metadata = { selectId: "zone:" + zone };
+        return item;
+      };
       tasks.push(
         model(
           "/assets/furniture/chairDesk.glb",
@@ -755,14 +782,67 @@ export async function mountWorld(
       );
       tasks.push(
         model(
-          "/assets/furniture/computerScreen.glb",
+          zone === "ops" ? "/assets/cyberpunk/Computer_Large.glb" : "/assets/furniture/computerScreen.glb",
           [x, 0.91 + y, z],
-          0.55,
+          zone === "ops" ? 1.15 : 0.55,
           "height",
           0,
           "zone:" + zone,
         ),
       );
+      if (zone === "missions") {
+        prop("mission projector", 0, 1.03, 0, 0.55, 0.18, 0.55, stone);
+        const ring = MeshBuilder.CreateTorus("mission map", { diameter: 0.9, thickness: 0.035, tessellation: 32 }, scene);
+        ring.position.set(x, y + 1.27, z);
+        ring.material = blue;
+        ring.metadata = { selectId: "zone:" + zone };
+        if (!opts.reduced && data.work.length) scene.onBeforeRenderObservable.add(() => { ring.rotation.y += 0.002; });
+      } else if (zone === "dispatch") {
+        for (const dx of [-0.72, 0, 0.72]) {
+          prop("dispatch rail", dx, 0.96, 0.36, 0.57, 0.05, 0.32, stone);
+          prop("dispatch status", dx, 1.005, 0.36, 0.36, 0.025, 0.11, data.commands.some((c: Row) => c.status === "queued") ? gold : blue);
+        }
+      } else if (zone === "ops") {
+        prop("ops monitor bridge", 0, 1.1, -0.42, 1.8, 0.09, 0.17, stone);
+        for (const dx of [-0.65, 0.65]) prop("ops telemetry", dx, 1.12, 0.42, 0.35, 0.045, 0.18, blue);
+      } else if (zone === "handoffs") {
+        prop("handoff delivery rail", 0, 0.96, 0, 1.8, 0.08, 0.43, stone);
+        if (data.handoffs.some((h: Row) => ["queued", "completed"].includes(h.status))) {
+          const packet = prop("handoff packet", -0.65, 1.12, 0, 0.28, 0.22, 0.2, gold);
+          prop("packet seal", -0.65, 1.24, 0, 0.18, 0.03, 0.14, blue).setParent(packet);
+          const recent = data.commands.find((c: Row) => c.verb === "handoff.accept" && c.status === "completed" && Date.now() - Date.parse(c.updatedAt || c.issuedAt) < 120000);
+          if (recent && !opts.reduced && completedHandoffs.length) {
+            const start = performance.now();
+            scene.onBeforeRenderObservable.add(() => {
+              const progress = Math.min(1, (performance.now() - start) / 2400);
+              packet.position.x = x - 0.65 + progress * 1.3;
+              packet.position.y = y + 1.12 + Math.sin(progress * Math.PI) * 0.55;
+            });
+          }
+        }
+      } else if (zone === "team") {
+        prop("collaboration console", 0, 0.96, -0.3, 1.7, 0.08, 0.45, stone);
+        for (const dx of [-0.65, 0.65]) prop("shared thread display", dx, 1.05, -0.3, 0.48, 0.06, 0.25, blue);
+      } else if (zone === "review") {
+        const delivered = data.artifacts.slice(0, 3);
+        delivered.forEach((artifact: Row, index: number) => {
+          const card = prop("delivered evidence", -0.66 + index * 0.43, 0.99, 0.27, 0.36, 0.045, 0.43, white);
+          prop("evidence spine", -0.66 + index * 0.43, 1.02, 0.07, 0.36, 0.025, 0.04, blue);
+          if (index === 0 && !opts.reduced && Date.now() - Date.parse(artifact.createdAt) < 90000) {
+            const start = performance.now();
+            scene.onBeforeRenderObservable.add(() => {
+              const t = Math.min(1, (performance.now() - start) / 1200);
+              card.position.y = y + 0.99 + (1 - t) * (1 - t) * 0.65;
+            });
+          }
+        });
+        if (pendingReviews) {
+          const beacon = prop("approval beacon", 0.91, 1.13, -0.47, 0.14, 0.29, 0.14, gold);
+          if (!opts.reduced) scene.onBeforeRenderObservable.add(() => {
+            beacon.scaling.y = 1 + Math.sin(performance.now() * 0.004) * 0.18;
+          });
+        }
+      }
       const count =
         zone === "review"
           ? data.approvals.filter((a: Row) => a.status === "waiting").length
@@ -785,6 +865,55 @@ export async function mountWorld(
         4,
       );
     }
+    const hqStations: Record<string, [number, number]> = {
+      typing: [0, -3], presenting: [-5, -3], reading: [5, 3],
+      on_call: [0, 3], walking: [-5, 3], celebrating: [-5, -3], idle: [0, 3],
+    };
+    data.agents.filter((a: Row) => a.connection === "Connected").slice(0, 8).forEach((crew: Row, index: number) => {
+      const mode = resolveActivity(crew, data.runs);
+      const [sx, sz] = hqStations[mode] || hqStations.idle;
+      const baseX = sx + (index % 2 ? 1.4 : -1.4);
+      const baseZ = sz + (index > 3 ? -1.1 : 1.1);
+      tasks.push(model(
+        `/assets/characters/${["jeff", "relay", "jefferson", "jev"].includes(crew.id) ? crew.id : "neutral"}.glb`,
+        [baseX, 0, baseZ], 1.5, "height", 0, `agent:${crew.id}`,
+      ).then((avatar) => {
+        if (!avatar) return;
+        const nodes = avatar.getDescendants(false);
+        const pivot = (name: string) => nodes.find((node) => node.name.startsWith(name + "-") && !node.name.includes("mesh") && !node.name.includes("shoe")) as TransformNode | undefined;
+        const left = pivot("left-arm"), right = pivot("right-arm"), head = pivot("head");
+        const leftLeg = pivot("left-leg"), rightLeg = pivot("right-leg");
+        for (const limb of [left, right, head, leftLeg, rightLeg]) if (limb) limb.rotationQuaternion = null;
+        if (mode === "typing") {
+          if (left) left.rotation.x = -0.8;
+          if (right) right.rotation.x = -0.8;
+        } else if (mode === "presenting" && right) right.rotation.x = -1.25;
+        else if (mode === "reading" && head) head.rotation.x = 0.2;
+        else if (mode === "on_call" && right) right.rotation.x = -2;
+        else if (mode === "celebrating") {
+          if (left) left.rotation.x = -2.3;
+          if (right) right.rotation.x = -2.3;
+        }
+        if (opts.reduced || mode === "idle") return;
+        scene.onBeforeRenderObservable.add(() => {
+          const t = performance.now() / 1000 + index * 0.7;
+          if (mode === "walking") {
+            const stride = Math.sin(t * 5.2) * 0.38;
+            avatar.position.x = baseX + Math.sin(t * 0.68) * 0.7;
+            if (leftLeg) leftLeg.rotation.x = stride;
+            if (rightLeg) rightLeg.rotation.x = -stride;
+            if (left) left.rotation.x = -stride * 0.6;
+            if (right) right.rotation.x = stride * 0.6;
+          } else if (mode === "typing") {
+            if (left) left.rotation.x = -0.8 + Math.sin(t * 8) * 0.12;
+            if (right) right.rotation.x = -0.8 + Math.sin(t * 8 + 1.4) * 0.12;
+          } else if (mode === "presenting" && right) right.rotation.x = -1.25 + Math.sin(t * 1.5) * 0.18;
+          else if (mode === "reading" && head) head.rotation.x = 0.2 + Math.sin(t * 0.8) * 0.03;
+          else if (mode === "on_call" && head) head.rotation.y = Math.sin(t * 0.5) * 0.09;
+          else if (mode === "celebrating") avatar.position.y = Math.abs(Math.sin(t * 2)) * 0.07;
+        });
+      }));
+    });
     for (const x of [-7.5, 7.5])
       for (const z of [-5, 5])
         tasks.push(
@@ -811,7 +940,7 @@ export async function mountWorld(
     const campusCenter = (southEdge + northEdge) / 2;
     cityCenterZ = campusCenter;
     const extent = Math.max(southEdge - 12, -12 - northEdge);
-    initialRadius = Math.max(initialRadius, 35 + extent * 1.5);
+    initialRadius = Math.max(initialRadius, 30 + extent * 1.5);
     camera.target = new Vector3(0, 0, campusCenter);
     if (!cityCamera || extent > cityCameraExtent) camera.radius = initialRadius;
     cityCameraExtent = Math.max(cityCameraExtent, extent);
@@ -1056,7 +1185,7 @@ export async function mountWorld(
         detailed_hub: "structure_detailed",
       };
       if (["skyscraper", "office_building", "big_box", "warehouse"].includes(b.model)) {
-        buildingVariant(b.name, x, z, b.model, selectId, b.y || 0);
+        buildingVariant(b.name, x, z, b.model, selectId, b.y || 0, buildingRoot);
       } else if (buildingModels[b.model]) {
         tasks.push(
           model(
@@ -1174,6 +1303,12 @@ export async function mountWorld(
             "height",
           ),
         );
+    for (const x of [-3.25, 3.25])
+      for (const z of [-8, 8])
+        tasks.push(model(
+          "/assets/cyberpunk/Light_Street_1.glb",
+          [x, 0.08, z], 3.2, "height", x < 0 ? 0 : Math.PI,
+        ));
     box("reflection pool", -7, 0.13, 10, 6, 0.1, 1.5, white);
     box("water", -7, 0.2, 10, 5.6, 0.05, 1.1, water);
     for (const x of [-10, 10]) {
@@ -1277,13 +1412,13 @@ export async function mountWorld(
     const anchors: Record<string, number[]> = {
       primary_desk: [1.3, 0, -1.6],
       task_chair: [1.3, 0, 0.18],
-      desk_screen: [1.3, 0.7, -1.88],
-      desk_accessory: [1.65, 0.7, -1.26],
+      desk_screen: [1.3, 0.83, -1.75],
+      desk_accessory: [1.65, 0.83, -1.26],
       plant_corner: [4.4, 0, -3.3],
       library: [-4.2, 0, -3.5],
       lounge_seating: [-3.6, 0, 1.4],
       coffee_table: [-2, 0, 1.4],
-      floor_rug: [0.8, 0.01, 1.6],
+      floor_rug: [-1.75, 0.01, 1.5],
       floor_lamp: [4.2, 0, 0.5],
       feature_prop: [-3.5, 0.8, -1.4],
       wall_display: [4, 1.4, -3.95],
@@ -1564,6 +1699,15 @@ export async function mountWorld(
     const loading = canvas.parentElement?.querySelector("#world-loading");
     loading?.classList.add("ready");
     canvas.dataset.ready = "true";
+    if (opts.headquarters) {
+      const viewport = camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight());
+      canvas.dataset.zoneTargets = JSON.stringify(Object.fromEntries(
+        scene.meshes.filter((mesh) => mesh.name === "zone table" && mesh.metadata?.selectId).map((mesh) => {
+          const point = Vector3.Project(mesh.getAbsolutePosition(), Matrix.Identity(), scene.getTransformMatrix(), viewport);
+          return [mesh.metadata.selectId.slice(5), [point.x / engine.getRenderWidth(), point.y / engine.getRenderHeight()]];
+        }),
+      ));
+    }
     canvas.dataset.diagnostics = JSON.stringify({
       loadMs: Math.round(performance.now() - started),
       meshes: scene.meshes.length,
@@ -1573,6 +1717,10 @@ export async function mountWorld(
       quality: mobile ? "core" : "standard",
       source: agent?.designSource,
       revision: agent?.revision,
+      activity: agent ? resolveActivity(agent, data.runs) : null,
+      connectedCrewInHq: opts.headquarters ? data.agents.filter((a: Row) => a.connection === "Connected").length : 0,
+      deliveredEvidenceInHq: opts.headquarters ? Math.min(3, data.artifacts.length) : 0,
+      recentAcknowledgedHandoff: opts.headquarters && data.commands.some((c: Row) => c.verb === "handoff.accept" && c.status === "completed" && Date.now() - Date.parse(c.updatedAt || c.issuedAt) < 120000),
     });
     if (failures.length) {
       const note = document.createElement("span");
@@ -1626,7 +1774,7 @@ export async function mountWorld(
       camera.radius = initialRadius;
       camera.target = new Vector3(
         0,
-        agent ? 0.6 : 0,
+        agent ? 0.6 : opts.headquarters ? 0.65 : 0,
         agent || opts.headquarters ? 0 : cityCenterZ,
       );
     },

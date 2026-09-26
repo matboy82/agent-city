@@ -21,13 +21,13 @@ export function resolveActivity(
   if (agent.status !== "active" && !running) return "idle";
   if (agent.activity && agent.activity !== "idle") return agent.activity;
   const task = String(agent.currentTask || "").toLowerCase();
-  if (/\b(call|meeting|interview|sync|phone|zoom|standup)\b/.test(task))
+  if (/\b(call|calling|meeting|interview|sync|phone|zoom|standup)\b/.test(task))
     return "on_call";
-  if (/\b(present|presentation|demo|briefing|pitch)\b/.test(task))
+  if (/\b(present|presenting|presentation|demo|briefing|pitch)\b/.test(task))
     return "presenting";
-  if (/\b(read|review|audit|study|document|spec|book)\b/.test(task))
+  if (/\b(read|reading|review|reviewing|audit|auditing|study|studying|document|spec|book)\b/.test(task))
     return "reading";
-  if (/\b(walk|deliver|field|visit|outreach|errand)\b/.test(task))
+  if (/\b(walk|walking|deliver|delivering|field|visit|visiting|outreach|errand)\b/.test(task))
     return "walking";
   return task || running ? "typing" : "idle";
 }

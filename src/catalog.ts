@@ -417,6 +417,8 @@ export const OFFICE_THEME_DESIGNS: Record<OfficeThemeId, OfficeDesign> = {
       p("floor_lamp", "kenney.square_lamp"),
       p("plant_corner", "polypizza.plant"),
       p("lounge_seating", "polypizza.sofa"),
+      p("coffee_table", "kenney.coffee_table"),
+      p("floor_rug", "kenney.rug"),
     ],
   },
   trading_floor: {

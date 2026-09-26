@@ -63,6 +63,35 @@ test("city editor saves a building model and places an asset", async ({
     timeout: 30000,
   });
 });
+test("project site registration hides agent identity and city editor previews below the viewer", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium");
+  test.setTimeout(120000);
+  await login(page);
+  await page.getByRole("button", { name: "Your crew", exact: true }).click();
+  await page.getByRole("button", { name: "Register building" }).click();
+  await expect(page.locator('#dialog-form [name="kind"]')).toHaveValue("project_site");
+  await expect(page.locator('#agent-id-field')).toBeHidden();
+  await expect(page.locator('#dialog-form [name="agentId"]')).toBeDisabled();
+  await page.locator('#dialog-form [name="kind"]').selectOption("agent_hq");
+  await expect(page.locator('#agent-id-field')).toBeVisible();
+  await expect(page.locator('#dialog-form [name="agentId"]')).toHaveAttribute("required", "");
+  await page.locator('#dialog-form [name="kind"]').selectOption("project_site");
+  await expect(page.locator('#agent-id-field')).toBeHidden();
+  await page.locator('#dialog-form [name="name"]').fill("Browser project site");
+  await page.getByRole("button", { name: "Register", exact: true }).click();
+  await expect(page.locator("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "The city", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Browser project site" })).toBeVisible();
+  await page.getByRole("button", { name: "Edit city" }).click();
+  const card = await page.locator('.city-layout > .world-card').boundingBox();
+  const editor = await page.locator('.city-layout > .city-editor').boundingBox();
+  expect(editor!.y).toBeGreaterThanOrEqual(card!.y + card!.height);
+  await page.locator("#city-model").selectOption("warehouse");
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", { timeout: 30000 });
+  await expect(page.locator("#city-model")).toHaveValue("warehouse");
+  await page.getByRole("button", { name: "Right", exact: true }).click();
+  await expect(page.locator("#city-values")).toContainText("0.50");
+});
 test("HQ desks open focused panels and HQ building and room edits persist", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium");
   test.setTimeout(120000);
@@ -83,6 +112,57 @@ test("HQ desks open focused panels and HQ building and room edits persist", asyn
   await page.getByRole("button", { name: "Right", exact: true }).click();
   await page.getByRole("button", { name: "Save room" }).click();
   await expect(page.locator("#hq-position-values")).toContainText("0.25");
+});
+test("city assets and record-driven HQ animation scene load cleanly", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium");
+  test.setTimeout(120000);
+  await page.route("**/api/actions", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST" || JSON.parse(request.postData() || "{}").action !== "get_dashboard") {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    for (const [id, activity] of [["jeff", "typing"], ["relay", "presenting"]]) {
+      const crew = snapshot.agents.find((agent: any) => agent.id === id);
+      crew.connection = "Connected";
+      crew.status = "active";
+      crew.activity = activity;
+      crew.currentTask = activity === "typing" ? "Drafting the mission" : "Presenting the review";
+    }
+    const now = new Date().toISOString();
+    snapshot.artifacts.push({ id: "art-preview", title: "Verified report", uri: "https://example.com/report", agentId: "jeff", revision: 1, createdAt: now });
+    snapshot.handoffs.push({ id: "handoff-preview", status: "completed", from: "jeff", to: "relay", workId: "work-preview", context: "Verified transfer" });
+    snapshot.commands.push({ id: "command-preview", verb: "handoff.accept", status: "completed", updatedAt: now });
+    await route.fulfill({ response, json: snapshot });
+  });
+  await login(page);
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", { timeout: 30000 });
+  expect(JSON.parse((await page.locator("#world").getAttribute("data-diagnostics")) || "{}").failures).toEqual([]);
+  await page.screenshot({ path: "test-results/art-city.png" });
+  await page.getByRole("button", { name: "BIS HQ", exact: true }).first().click();
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", { timeout: 30000 });
+  const diagnostics = JSON.parse((await page.locator("#world").getAttribute("data-diagnostics")) || "{}");
+  expect(diagnostics.failures).toEqual([]);
+  expect(diagnostics.connectedCrewInHq).toBe(2);
+  expect(diagnostics.deliveredEvidenceInHq).toBe(1);
+  expect(diagnostics.recentAcknowledgedHandoff).toBe(true);
+  await page.screenshot({ path: "test-results/art-hq.png" });
+  const zoneTargets = JSON.parse((await page.locator("#world").getAttribute("data-zone-targets")) || "{}");
+  for (const [zone, title] of [["ops", "Live ops"], ["missions", "Mission table"], ["dispatch", "Dispatch board"], ["handoffs", "Handoff bay"], ["team", "Collaboration"], ["review", "Review room"]]) {
+    expect(zoneTargets[zone]).toHaveLength(2);
+    await page.evaluate(() => document.querySelector(".hq-world")?.scrollIntoView({ block: "start" }));
+    await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", { timeout: 30000 });
+    let canvas: Awaited<ReturnType<ReturnType<typeof page.locator>["boundingBox"]>> = null;
+    await expect.poll(async () => {
+      canvas = await page.locator("#world").boundingBox();
+      return canvas !== null;
+    }).toBe(true);
+    if (!canvas) throw new Error(`HQ canvas missing before clicking ${zone}`);
+    await page.mouse.click(canvas.x + canvas.width * zoneTargets[zone][0], canvas.y + canvas.height * zoneTargets[zone][1]);
+    await expect(page.locator("#hq-zone-content > .section-title h2")).toHaveText(title);
+  }
 });
 test("owner controls, office, durable note, settings and responsive navigation", async ({
   page,
