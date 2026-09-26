@@ -23,9 +23,15 @@ const terminal = ["completed", "failed", "expired", "canceled"];
 const stamp = () => Date.now();
 const denverMonth = (value) => {
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Denver", year: "numeric", month: "2-digit",
+    timeZone: "America/Denver",
+    year: "numeric",
+    month: "2-digit",
   }).formatToParts(new Date(value));
-  return parts.find((p) => p.type === "year").value + "-" + parts.find((p) => p.type === "month").value;
+  return (
+    parts.find((p) => p.type === "year").value +
+    "-" +
+    parts.find((p) => p.type === "month").value
+  );
 };
 export class Core {
   constructor(store) {
@@ -104,47 +110,47 @@ export class Core {
   snapshot() {
     const work = this.s.list("work");
     const runs = this.s.list("run");
-    const agents = this.s
-      .list("agent")
-      .map(({ credentialHash, ...a }) => ({
-        ...a,
-        connection: !a.lastSeen
-          ? "Never connected"
-          : stamp() - Date.parse(a.lastSeen) > 600000
-            ? "Disconnected"
-            : stamp() - Date.parse(a.lastSeen) > 180000
-              ? "Stale"
-              : "Connected",
-        effectiveDesign:
-          a.ownerDesign ||
-          a.agentDesign ||
-          OFFICE_THEME_DESIGNS[a.theme] ||
-          OFFICE_THEME_DESIGNS.neutral,
-        operationalState:
-          !a.lastSeen || stamp() - Date.parse(a.lastSeen) > 600000
-            ? "disconnected"
-            : a.status === "waiting_on_matt"
-              ? "waiting"
-              : runs.some((r) => r.agentId === a.id && r.status === "running")
-                ? "active"
-                : work.some(
-                      (w) =>
-                        w.raci.responsible.includes(a.id) &&
-                        w.status === "blocked",
-                    )
-                  ? "blocked"
-                  : a.status,
-        designSource: a.ownerDesign
-          ? "Owner override"
-          : a.agentDesign
-            ? "Agent design"
-            : "Theme default",
-      }));
+    const agents = this.s.list("agent").map(({ credentialHash, ...a }) => ({
+      ...a,
+      connection: !a.lastSeen
+        ? "Never connected"
+        : stamp() - Date.parse(a.lastSeen) > 600000
+          ? "Disconnected"
+          : stamp() - Date.parse(a.lastSeen) > 180000
+            ? "Stale"
+            : "Connected",
+      effectiveDesign:
+        a.ownerDesign ||
+        a.agentDesign ||
+        OFFICE_THEME_DESIGNS[a.theme] ||
+        OFFICE_THEME_DESIGNS.neutral,
+      operationalState:
+        !a.lastSeen || stamp() - Date.parse(a.lastSeen) > 600000
+          ? "disconnected"
+          : a.status === "waiting_on_matt"
+            ? "waiting"
+            : runs.some((r) => r.agentId === a.id && r.status === "running")
+              ? "active"
+              : work.some(
+                    (w) =>
+                      w.raci.responsible.includes(a.id) &&
+                      w.status === "blocked",
+                  )
+                ? "blocked"
+                : a.status,
+      designSource: a.ownerDesign
+        ? "Owner override"
+        : a.agentDesign
+          ? "Agent design"
+          : "Theme default",
+    }));
     const budgetEntries = this.s.list("budget_entry", 100000);
     return {
       agents,
       config: this.require("config", "bis"),
+      hq: this.s.get("hq", "main") || { id: "main", revision: 0, position: [0, 0, 0], model: "campus", zones: {} },
       buildings: this.s.list("building"),
+      cityAssets: this.s.list("city_asset"),
       work: this.s.list("work"),
       runs: this.s.list("run"),
       commands: this.s.list("command"),
@@ -158,7 +164,9 @@ export class Core {
       references: this.s.list("reference"),
       officePresets: this.s.list("office_preset"),
       savedViews: this.s.list("saved_view"),
-      budgets: this.s.list("budget").map((b) => ({ ...b, used: this.budgetUsed(b, budgetEntries) })),
+      budgets: this.s
+        .list("budget")
+        .map((b) => ({ ...b, used: this.budgetUsed(b, budgetEntries) })),
       budgetEntries,
       events: this.s.events(),
       sync: this.s.get("sync", "latest"),
@@ -169,7 +177,11 @@ export class Core {
   budgetUsed(budget, entries = this.s.list("budget_entry", 100000)) {
     const month = denverMonth(now());
     return entries
-      .filter((entry) => entry.budgetId === budget.id && (budget.period === "total" || denverMonth(entry.at) === month))
+      .filter(
+        (entry) =>
+          entry.budgetId === budget.id &&
+          (budget.period === "total" || denverMonth(entry.at) === month),
+      )
       .reduce((sum, entry) => sum + entry.amount, 0);
   }
   enqueue(agentId, verb, workId, payload = {}, dedupe = id()) {
@@ -275,11 +287,16 @@ export class Core {
       403,
     );
     for (const budget of this.s.list("budget")) {
-      const applies = budget.scope === "organization" ||
+      const applies =
+        budget.scope === "organization" ||
         (budget.scope === "agent" && budget.scopeId === a.id) ||
         (budget.scope === "mission" && budget.scopeId === w.id);
       if (applies)
-        assert(this.budgetUsed(budget) < budget.hardLimit, `Budget hard limit reached: ${budget.name}`, 409);
+        assert(
+          this.budgetUsed(budget) < budget.hardLimit,
+          `Budget hard limit reached: ${budget.name}`,
+          409,
+        );
     }
     assert(
       ["planned", "ready", "blocked"].includes(w.status),
@@ -557,7 +574,16 @@ export class Core {
           r = {
             id: id(),
             name: z.string().trim().min(1).max(60).parse(b.name),
-            filter: z.enum(["needs_owner", "failed", "blocked", "disconnected", "stale", "active"]).parse(b.filter),
+            filter: z
+              .enum([
+                "needs_owner",
+                "failed",
+                "blocked",
+                "disconnected",
+                "stale",
+                "active",
+              ])
+              .parse(b.filter),
             createdAt: now(),
           };
           this.s.put("saved_view", r);
@@ -569,19 +595,44 @@ export class Core {
           break;
         }
         case "save_budget": {
-          const scope = z.enum(["organization", "agent", "mission", "routine"]).parse(b.scope);
-          const scopeId = scope === "organization" ? "bis" : z.string().min(1).max(100).parse(b.scopeId);
-          if (scope !== "organization") this.require({ agent: "agent", mission: "work", routine: "routine" }[scope], scopeId);
-          const softLimit = z.number().nonnegative().finite().parse(Number(b.softLimit));
-          const hardLimit = z.number().positive().finite().parse(Number(b.hardLimit));
-          assert(softLimit <= hardLimit, "Soft limit must not exceed hard limit");
+          const scope = z
+            .enum(["organization", "agent", "mission", "routine"])
+            .parse(b.scope);
+          const scopeId =
+            scope === "organization"
+              ? "bis"
+              : z.string().min(1).max(100).parse(b.scopeId);
+          if (scope !== "organization")
+            this.require(
+              { agent: "agent", mission: "work", routine: "routine" }[scope],
+              scopeId,
+            );
+          const softLimit = z
+            .number()
+            .nonnegative()
+            .finite()
+            .parse(Number(b.softLimit));
+          const hardLimit = z
+            .number()
+            .positive()
+            .finite()
+            .parse(Number(b.hardLimit));
+          assert(
+            softLimit <= hardLimit,
+            "Soft limit must not exceed hard limit",
+          );
           r = {
             id: id(),
             name: z.string().trim().min(1).max(80).parse(b.name),
-            scope, scopeId,
-            unit: z.enum(["USD", "tokens", "minutes", "API calls"]).parse(b.unit),
+            scope,
+            scopeId,
+            unit: z
+              .enum(["USD", "tokens", "minutes", "API calls"])
+              .parse(b.unit),
             period: z.enum(["monthly", "total"]).parse(b.period),
-            softLimit, hardLimit, createdAt: now(),
+            softLimit,
+            hardLimit,
+            createdAt: now(),
           };
           this.s.put("budget", r);
           break;
@@ -589,13 +640,21 @@ export class Core {
         case "record_budget_usage": {
           const budget = this.require("budget", b.budgetId);
           const key = z.string().min(8).max(100).parse(b.idempotency_key);
-          const previous = this.s.list("budget_entry", 100000).find((entry) => entry.idempotencyKey === key);
+          const previous = this.s
+            .list("budget_entry", 100000)
+            .find((entry) => entry.idempotencyKey === key);
           if (previous) {
-            assert(previous.budgetId === budget.id, "Usage key belongs to another budget", 409);
+            assert(
+              previous.budgetId === budget.id,
+              "Usage key belongs to another budget",
+              409,
+            );
             return { ok: true, id: previous.id, duplicate: true };
           }
           r = {
-            id: id(), budgetId: budget.id, idempotencyKey: key,
+            id: id(),
+            budgetId: budget.id,
+            idempotencyKey: key,
             amount: z.number().positive().finite().parse(Number(b.amount)),
             note: z.string().trim().min(1).max(400).parse(b.note),
             at: now(),
@@ -605,7 +664,12 @@ export class Core {
         }
         case "delete_budget": {
           r = this.require("budget", b.id);
-          assert(!this.s.list("budget_entry", 100000).some((entry) => entry.budgetId === r.id), "Budget with recorded usage cannot be deleted");
+          assert(
+            !this.s
+              .list("budget_entry", 100000)
+              .some((entry) => entry.budgetId === r.id),
+            "Budget with recorded usage cannot be deleted",
+          );
           this.s.remove("budget", r.id);
           break;
         }
@@ -632,6 +696,39 @@ export class Core {
               delete r.agentDesign;
             }
           }
+          r.revision++;
+          r.designUpdatedAt = now();
+          this.s.put("agent", r);
+          break;
+        }
+        case "save_office_positions": {
+          r = this.require("agent", b.agentId);
+          this.version(r, b.revision);
+          const slots = [
+            "primary_desk",
+            "task_chair",
+            "desk_screen",
+            "desk_accessory",
+            "plant_corner",
+            "library",
+            "lounge_seating",
+            "coffee_table",
+            "floor_rug",
+            "floor_lamp",
+            "feature_prop",
+            "wall_display",
+          ];
+          const positions = z
+            .partialRecord(
+              z.enum(slots),
+              z.tuple([
+                z.number().finite().min(-3).max(3),
+                z.number().finite().min(-1.5).max(1.5),
+                z.number().finite().min(-3).max(3),
+              ]),
+            )
+            .parse(b.positions);
+          r.officePositions = positions;
           r.revision++;
           r.designUpdatedAt = now();
           this.s.put("agent", r);
@@ -782,19 +879,81 @@ export class Core {
                 "studio",
                 "workshop",
               ]),
+              model: z
+                .enum([
+                  "campus",
+                  "hangar_a",
+                  "hangar_b",
+                  "glass_atrium",
+                  "detailed_hub",
+                  "skyscraper",
+                  "office_building",
+                  "big_box",
+                  "warehouse",
+                ])
+                .default("campus"),
               goalId: z.string().optional(),
+              plotId: z.string().optional(),
             })
             .strict()
             .parse(b);
           if (v.goalId) this.require("goal", v.goalId);
+          if (v.plotId)
+            assert(
+              v.kind === "project_site",
+              "Reserved plots accept projects only",
+            );
           if (v.kind === "project_site") delete v.agentId;
+          const available =
+            v.kind === "project_site"
+              ? v.plotId
+                ? this.require("building", v.plotId)
+                : this.s
+                    .list("building")
+                    .find((site) => site.kind === "reserved_plot")
+              : null;
+          if (available)
+            assert(
+              available.kind === "reserved_plot",
+              "That campus plot is already in use",
+              409,
+            );
+          const occupied = this.s
+            .list("building")
+            .filter((site) => site.id !== available?.id);
+          const campusPlots = [
+            [12, 0],
+            [-12, 0],
+            [0, 10],
+            [0, -10],
+            [-12, 12],
+            [12, 12],
+          ];
+          const plot = campusPlots.find(
+            ([x, z]) =>
+              !occupied.some(
+                (site) =>
+                  Math.abs(site.x - x) < 6.5 && Math.abs(site.z - z) < 4.5,
+              ),
+          ) || [
+            ((occupied.length % 3) - 1) * 9,
+            18 + Math.floor(occupied.length / 3) * 8,
+          ];
           r = {
             ...v,
-            id: id(),
-            x: ((this.s.list("building").length % 4) - 1.5) * 8,
-            z: 16,
+            id: available?.id || id(),
+            x: available?.x ?? plot[0],
+            z: available?.z ?? plot[1],
             accent: "#2768df",
+            revision: (available?.revision || 0) + (available ? 1 : 0),
+            ...(available?.projectHistory
+              ? { projectHistory: available.projectHistory }
+              : {}),
+            ...(v.kind === "project_site"
+              ? { lifecycle: "planning", milestones: [] }
+              : {}),
           };
+          delete r.plotId;
           if (v.kind === "agent_hq") {
             assert(
               v.agentId && !this.s.get("agent", v.agentId),
@@ -813,6 +972,230 @@ export class Core {
               capabilities: [],
             });
           }
+          this.s.put("building", r);
+          break;
+        }
+        case "update_building": {
+          r = this.require("building", b.id);
+          this.version({ revision: r.revision || 0 }, b.revision);
+          assert(
+            r.kind !== "reserved_plot",
+            "Claim this plot with a new project first",
+          );
+          r.name = z.string().trim().min(1).max(80).parse(b.name);
+          r.style = z
+            .enum(["command", "exchange", "tower", "lab", "studio", "workshop"])
+            .parse(b.style);
+          r.model = z
+            .enum([
+              "campus",
+              "hangar_a",
+              "hangar_b",
+              "glass_atrium",
+              "detailed_hub",
+              "skyscraper",
+              "office_building",
+              "big_box",
+              "warehouse",
+            ])
+            .default("campus")
+            .parse(b.model);
+          const goalId = z.string().max(100).optional().parse(b.goalId);
+          if (goalId) this.require("goal", goalId);
+          r.goalId = goalId || undefined;
+          r.revision = (r.revision || 0) + 1;
+          this.s.put("building", r);
+          break;
+        }
+        case "save_city_building": {
+          r = this.require("building", b.id);
+          this.version({ revision: r.revision || 0 }, b.revision);
+          const position = z
+            .tuple([
+              z.number().finite().min(-40).max(40),
+              z.number().finite().min(0).max(2),
+              z.number().finite().min(-40).max(40),
+            ])
+            .parse(b.position);
+          const model = z
+            .enum([
+              "campus",
+              "hangar_a",
+              "hangar_b",
+              "glass_atrium",
+              "detailed_hub",
+              "skyscraper",
+              "office_building",
+              "big_box",
+              "warehouse",
+            ])
+            .parse(b.model);
+          assert(
+            !this.s
+              .list("building")
+              .some(
+                (other) =>
+                  other.id !== r.id &&
+                  Math.abs(other.x - position[0]) < 6 &&
+                  Math.abs(other.z - position[2]) < 5,
+              ),
+            "Building plots must remain clear of each other",
+          );
+          assert(
+            Math.abs(position[0] - (this.s.get("hq", "main")?.position?.[0] || 0)) > 4 ||
+              Math.abs(position[2] - (this.s.get("hq", "main")?.position?.[2] || 0)) > 4,
+            "Keep the HQ plaza clear",
+          );
+          r.x = position[0];
+          r.y = position[1];
+          r.z = position[2];
+          r.model = model;
+          r.revision = (r.revision || 0) + 1;
+          this.s.put("building", r);
+          break;
+        }
+        case "save_hq": {
+          r = this.s.get("hq", "main") || { id: "main", revision: 0, position: [0, 0, 0], model: "campus", zones: {} };
+          this.version(r, b.revision);
+          if (b.position) {
+            const position = z.tuple([
+              z.number().finite().min(-30).max(30),
+              z.number().finite().min(0).max(2),
+              z.number().finite().min(-30).max(30),
+            ]).parse(b.position);
+            assert(!this.s.list("building").some((other) =>
+              Math.abs(other.x - position[0]) < 6 && Math.abs(other.z - position[2]) < 5
+            ), "Keep the HQ clear of other buildings");
+            r.position = position;
+          }
+          if (b.model) r.model = z.enum([
+            "campus", "hangar_a", "hangar_b", "glass_atrium", "detailed_hub",
+            "skyscraper", "office_building", "big_box", "warehouse",
+          ]).parse(b.model);
+          if (b.zones) {
+            const zones = z.record(z.string(), z.tuple([
+              z.number().finite().min(-1).max(1),
+              z.number().finite().min(-0.5).max(1),
+              z.number().finite().min(-0.7).max(0.7),
+            ])).parse(b.zones);
+            assert(Object.keys(zones).every((zone) => ["missions", "dispatch", "ops", "handoffs", "team", "review"].includes(zone)), "Unknown HQ zone");
+            r.zones = zones;
+          }
+          r.revision++;
+          this.s.put("hq", r);
+          break;
+        }
+        case "add_city_asset": {
+          assert(
+            this.s.list("city_asset").length < 80,
+            "Campus asset limit reached",
+          );
+          const asset = z
+            .enum([
+              "planter",
+              "small_tree",
+              "satellite_dish",
+              "rock_cluster",
+              "landing_pad",
+            ])
+            .parse(b.asset);
+          const position = z
+            .tuple([
+              z.number().finite().min(-40).max(40),
+              z.number().finite().min(0).max(5),
+              z.number().finite().min(-40).max(40),
+            ])
+            .parse(b.position);
+          r = { id: id(), asset, position, revision: 0 };
+          this.s.put("city_asset", r);
+          break;
+        }
+        case "save_city_asset": {
+          r = this.require("city_asset", b.id);
+          this.version(r, b.revision);
+          r.asset = z
+            .enum([
+              "planter",
+              "small_tree",
+              "satellite_dish",
+              "rock_cluster",
+              "landing_pad",
+            ])
+            .parse(b.asset);
+          r.position = z
+            .tuple([
+              z.number().finite().min(-40).max(40),
+              z.number().finite().min(0).max(5),
+              z.number().finite().min(-40).max(40),
+            ])
+            .parse(b.position);
+          r.revision++;
+          this.s.put("city_asset", r);
+          break;
+        }
+        case "remove_city_asset": {
+          r = this.require("city_asset", b.id);
+          this.version(r, b.revision);
+          this.s.remove("city_asset", r.id);
+          break;
+        }
+        case "set_project_lifecycle": {
+          r = this.require("building", b.id);
+          assert(
+            r.kind === "project_site",
+            "Only project sites have a lifecycle",
+          );
+          this.version({ revision: r.revision || 0 }, b.revision);
+          const next = z
+            .enum(["planning", "building", "running", "complete"])
+            .parse(b.lifecycle);
+          const current = r.lifecycle || "planning";
+          const transitions = {
+            planning: ["building"],
+            building: ["planning", "running"],
+            running: ["building", "complete"],
+            complete: ["running"],
+          };
+          assert(
+            transitions[current]?.includes(next),
+            `Cannot move project from ${current} to ${next}`,
+          );
+          const note = z.string().trim().min(1).max(500).parse(b.note);
+          r.lifecycle = next;
+          r.lifecycleHistory = [
+            ...(r.lifecycleHistory || []),
+            { from: current, to: next, note, at: now() },
+          ].slice(-30);
+          r.revision = (r.revision || 0) + 1;
+          this.s.put("building", r);
+          break;
+        }
+        case "retire_project": {
+          r = this.require("building", b.id);
+          assert(
+            r.kind === "project_site",
+            "Only project sites can be retired",
+          );
+          this.version({ revision: r.revision || 0 }, b.revision);
+          assert(b.confirm === true, "Confirm retiring this project");
+          r.projectHistory = [
+            ...(r.projectHistory || []),
+            {
+              name: r.name,
+              goalId: r.goalId,
+              style: r.style,
+              milestones: r.milestones || [],
+              lifecycleHistory: r.lifecycleHistory || [],
+              retiredAt: now(),
+            },
+          ].slice(-10);
+          r.kind = "reserved_plot";
+          r.name = "Ready for next project";
+          r.lifecycle = "ready";
+          delete r.goalId;
+          delete r.milestones;
+          delete r.lifecycleHistory;
+          r.revision = (r.revision || 0) + 1;
           this.s.put("building", r);
           break;
         }

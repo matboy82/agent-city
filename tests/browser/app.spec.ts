@@ -10,6 +10,80 @@ async function login(page) {
     page.getByRole("heading", { name: "Good to see you, Matt." }),
   ).toBeVisible();
 }
+test("city editor remains usable when a dashboard omits city assets", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium");
+  await page.route("**/api/actions", async (route) => {
+    const request = route.request();
+    if (
+      request.method() !== "POST" ||
+      JSON.parse(request.postData() || "{}").action !== "get_dashboard"
+    ) {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    delete snapshot.cityAssets;
+    await route.fulfill({ response, json: snapshot });
+  });
+  await login(page);
+  await page.getByRole("button", { name: "Edit city" }).click();
+  await expect(page.locator("#city-item")).toBeVisible();
+  await page.getByRole("button", { name: "Stop editing city" }).click();
+  await expect(page.getByRole("button", { name: "Edit city" })).toBeVisible();
+});
+test("city editor saves a building model and places an asset", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium");
+  test.setTimeout(120000);
+  page.on("console", (message) => {
+    if (message.type() === "error") console.log("browser:", message.text());
+  });
+  page.on("pageerror", (error) =>
+    console.log("browser exception:", error.message),
+  );
+  await login(page);
+  await page.getByRole("button", { name: "Edit city" }).click();
+  await page.locator("#city-item").selectOption("building:relay");
+  await page.locator("#city-model").selectOption("glass_atrium");
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", {
+    timeout: 30000,
+  });
+  await page.getByRole("button", { name: "Right", exact: true }).click();
+  await page.getByRole("button", { name: "Save item" }).click();
+  await expect(page.locator("#city-model")).toHaveValue("glass_atrium");
+  await page.locator("#city-add-model").selectOption("satellite_dish");
+  await page.getByRole("button", { name: "Add campus asset" }).click();
+  await expect(page.locator("#city-model")).toHaveValue("satellite_dish");
+  await page.getByRole("button", { name: "Save item" }).click();
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", {
+    timeout: 30000,
+  });
+});
+test("HQ desks open focused panels and HQ building and room edits persist", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium");
+  test.setTimeout(120000);
+  await login(page);
+  await page.getByRole("button", { name: "Edit city" }).click();
+  await expect(page.locator("#city-item")).toHaveValue("hq");
+  await page.locator("#city-model").selectOption("office_building");
+  await page.getByRole("button", { name: "Save item" }).click();
+  await expect(page.locator("#city-model")).toHaveValue("office_building");
+  await page.getByRole("button", { name: "Stop editing city" }).click();
+  await page.getByRole("button", { name: /BIS HQ/ }).last().click();
+  await expect(page.getByRole("button", { name: "Edit HQ" })).toBeVisible();
+  await page.getByRole("button", { name: "Live ops" }).click();
+  await expect(page.getByRole("heading", { name: "Event log" })).toBeVisible();
+  await expect(page.locator(".hq-event-log")).toHaveCSS("overflow-y", "auto");
+  await page.getByRole("button", { name: "Edit HQ" }).click();
+  await page.locator("#hq-zone-item").selectOption("missions");
+  await page.getByRole("button", { name: "Right", exact: true }).click();
+  await page.getByRole("button", { name: "Save room" }).click();
+  await expect(page.locator("#hq-position-values")).toContainText("0.25");
+});
 test("owner controls, office, durable note, settings and responsive navigation", async ({
   page,
 }, testInfo) => {
@@ -323,4 +397,184 @@ test("expanded viewer, focus pages and persistent collapsed navigation", async (
       () => document.documentElement.scrollWidth <= innerWidth + 1,
     ),
   ).toBeTruthy();
+});
+
+test("brief dock, saved view, office preset and budget controls", async ({
+  page,
+}, testInfo) => {
+  const suffix = Date.now();
+  const viewName = `Failure watch ${suffix}`;
+  const presetName = `Relay studio ${suffix}`;
+  const budgetName = `Monthly BIS test ${suffix}`;
+  test.skip(
+    testInfo.project.name !== "chromium",
+    "The owner controls are checked in one desktop browser.",
+  );
+  test.setTimeout(120000);
+  await login(page);
+  await page.getByRole("button", { name: "Show brief" }).click();
+  await expect(page.locator("#brief-dock")).toBeVisible();
+  const handle = page.locator("#brief-dock-handle");
+  const before = await page.locator("#brief-dock").boundingBox();
+  const bounds = await handle.boundingBox();
+  await page.mouse.move(bounds!.x + 40, bounds!.y + 15);
+  await page.mouse.down();
+  await page.mouse.move(bounds!.x - 45, bounds!.y + 40, { steps: 5 });
+  await page.mouse.up();
+  const after = await page.locator("#brief-dock").boundingBox();
+  expect(after!.x).toBeLessThan(before!.x - 30);
+  await page.getByRole("button", { name: "Hide brief" }).click();
+  await expect(page.locator("#brief-dock")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await page.getByRole("button", { name: "Failed", exact: true }).click();
+  await page.getByRole("button", { name: "Save this view" }).click();
+  await page.getByLabel("View name").fill(viewName);
+  await page.getByRole("button", { name: "Save view", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: viewName, exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Your crew", exact: true }).click();
+  await page.locator('[data-action="office"][data-id="relay"]').click();
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", {
+    timeout: 30000,
+  });
+  await page.getByRole("button", { name: "Design office" }).click();
+  await page.locator("#preset-name").fill(presetName);
+  await page.locator("#save-preset").click();
+  await expect(page.locator("#design-status")).toHaveText(
+    "Layout saved for every office.",
+  );
+  await expect(page.locator('select[name="preset"]')).toContainText(presetName);
+  await page
+    .locator("dialog")
+    .evaluate((dialog: HTMLDialogElement) => dialog.close());
+
+  await page
+    .getByRole("button", { name: "Settings and credits" })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Add budget" }).click();
+  await page.getByLabel("Budget name").fill(budgetName);
+  await page.getByLabel("Soft warning").fill("5");
+  await page.getByLabel("Hard limit").fill("10");
+  await page.getByRole("button", { name: "Create budget" }).click();
+  await expect(page.getByText(budgetName)).toBeVisible();
+});
+
+test("office position controls persist and existing campus buildings are editable", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    !["chromium", "mobile"].includes(testInfo.project.name),
+    "Position editing is checked on desktop and phone.",
+  );
+  test.setTimeout(120000);
+  await login(page);
+  await page.getByRole("button", { name: "Your crew", exact: true }).click();
+  await page.locator('[data-action="office"][data-id="relay"]').click();
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", {
+    timeout: 30000,
+  });
+  await page.getByRole("button", { name: "Edit positions" }).click();
+  await page.locator("#position-slot").selectOption("task_chair");
+  await page.getByRole("button", { name: "Reset item" }).click();
+  await page.getByRole("button", { name: "Right", exact: true }).click();
+  await page.getByRole("button", { name: "Up", exact: true }).click();
+  await page.getByRole("button", { name: "Front", exact: true }).click();
+  await expect(page.locator("#position-values")).toContainText(
+    "0.10 / 0.10 / 0.10",
+  );
+  await page.getByRole("button", { name: "Save positions" }).click();
+  await expect(page.locator("#position-slot")).toHaveCount(0);
+  await page.reload();
+  await login(page);
+  await page.getByRole("button", { name: "Your crew", exact: true }).click();
+  await page.locator('[data-action="office"][data-id="relay"]').click();
+  await page.getByRole("button", { name: "Edit positions" }).click();
+  await page.locator("#position-slot").selectOption("task_chair");
+  await expect(page.locator("#position-values")).toContainText(
+    "0.10 / 0.10 / 0.10",
+  );
+  await page.getByRole("button", { name: "Stop editing positions" }).click();
+  await page.getByRole("button", { name: "Edit building" }).click();
+  await page.getByLabel("Building name").fill("Relay Signal Tower");
+  await page.getByLabel("Architecture by work type").selectOption("tower");
+  await page.getByRole("button", { name: "Save building" }).click();
+  await expect(
+    page.getByRole("button", { name: "Edit building" }),
+  ).toBeVisible();
+});
+
+test("project plot becomes construction and finished campus building, then is reusable", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "chromium",
+    "Lifecycle visuals are checked once on desktop.",
+  );
+  test.setTimeout(150000);
+  const name = `Campus project ${Date.now()}`;
+  await login(page);
+  await page.getByRole("button", { name: "Your crew", exact: true }).click();
+  await page.getByRole("button", { name: "Register building" }).click();
+  await page.getByLabel("Name", { exact: true }).fill(name);
+  await page.getByLabel("Kind").selectOption("project_site");
+  await page.getByLabel("Architecture by work type").selectOption("lab");
+  await page.getByRole("button", { name: "Register", exact: true }).click();
+  await page.getByRole("button", { name: "The city", exact: true }).click();
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", {
+    timeout: 30000,
+  });
+  await page.screenshot({
+    path: "test-results/project-planning.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name, exact: true }).click();
+  await expect(page.locator(".lifecycle-panel")).toContainText("Planning");
+  await page.getByRole("button", { name: "Start construction" }).click();
+  await page
+    .getByLabel("Owner decision or evidence")
+    .fill("Construction approved");
+  await page.getByRole("button", { name: "Update project state" }).click();
+  await expect(page.locator(".lifecycle-panel")).toContainText("Building");
+  await page.getByRole("button", { name: "The city", exact: true }).click();
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", {
+    timeout: 30000,
+  });
+  await page.screenshot({
+    path: "test-results/project-building.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name, exact: true }).click();
+  await page.getByRole("button", { name: "Open for work" }).click();
+  await page.getByLabel("Owner decision or evidence").fill("Building opened");
+  await page.getByRole("button", { name: "Update project state" }).click();
+  await expect(page.locator(".lifecycle-panel")).toContainText("Running");
+  await page.getByRole("button", { name: "The city", exact: true }).click();
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", {
+    timeout: 30000,
+  });
+  await page.screenshot({
+    path: "test-results/project-running.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name, exact: true }).click();
+  await page.getByRole("button", { name: "Mark complete" }).click();
+  await page.getByLabel("Owner decision or evidence").fill("Project delivered");
+  await page.getByRole("button", { name: "Update project state" }).click();
+  await expect(page.locator(".lifecycle-panel")).toContainText("Complete");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Retire project" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Ready for next project." }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Start a project here" }).click();
+  await page.getByLabel("Name", { exact: true }).fill(`Next ${name}`);
+  await page.getByRole("button", { name: "Register", exact: true }).click();
+  await page.getByRole("button", { name: "The city", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: `Next ${name}`, exact: true }),
+  ).toBeVisible();
 });

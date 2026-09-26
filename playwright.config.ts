@@ -1,4 +1,7 @@
-﻿import { defineConfig, devices } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const browserDb = join(tmpdir(), "crew-browser-" + process.pid + ".sqlite");
 export default defineConfig({
   testDir: "./tests/browser",
   fullyParallel: false,
@@ -14,7 +17,7 @@ export default defineConfig({
   webServer: {
     command: "node server/index.mjs",
     url: "http://127.0.0.1:4311/healthz",
-    env: { PORT: "4311", CREW_DB: "data/browser-test.sqlite" },
+    env: { PORT: "4311", CREW_DB: browserDb },
     reuseExistingServer: false,
   },
 });

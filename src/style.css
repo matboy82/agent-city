@@ -1742,6 +1742,82 @@ legend {
 .city-layout > .world-card {
   height: max(620px, calc(100dvh - 245px));
 }
+.city-layout .world-card {
+  position: relative;
+}
+.brief-dock {
+  position: absolute;
+  z-index: 8;
+  width: 310px;
+  max-height: min(520px, calc(100% - 72px));
+  overflow: auto;
+  background: rgba(250, 252, 255, 0.97);
+  border: 1px solid #c8d8ec;
+  border-radius: 14px;
+  box-shadow: 0 18px 46px #172f5360;
+  color: #233b59;
+}
+.brief-dock-handle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 13px;
+  cursor: grab;
+  touch-action: none;
+  background: #eaf3ff;
+  border-bottom: 1px solid #c8d8ec;
+}
+.brief-dock-handle:active {
+  cursor: grabbing;
+}
+.brief-dock-handle span {
+  margin-left: auto;
+  font-size: 11px;
+  color: #5a779a;
+}
+.brief-dock-handle button {
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  cursor: pointer;
+}
+.brief-dock-body {
+  padding: 13px;
+}
+.brief-dock-body h3 {
+  margin: 14px 0 8px;
+  font-size: 13px;
+}
+.brief-dock-stats {
+  display: flex;
+  gap: 20px;
+  font-size: 12px;
+}
+.brief-dock-stats strong {
+  font-size: 21px;
+  color: #2464ce;
+}
+.brief-dock-item {
+  margin: 7px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.brief-dock-item small {
+  color: #5e7aa0;
+}
+.brief-dock .review-card {
+  padding: 12px;
+}
+@media (max-width: 700px) {
+  .brief-dock {
+    left: 8px !important;
+    top: 74px !important;
+    width: min(310px, calc(100% - 16px));
+  }
+  .brief-dock-handle span {
+    display: none;
+  }
+}
 .viewer-controls {
   display: flex;
   gap: 6px;
@@ -1768,8 +1844,94 @@ legend {
 .office-world {
   min-height: 650px;
 }
+.office-world.office-editing .world-tools {
+  position: static;
+  margin: 0 14px 14px;
+}
+.office-name-actions {
+  margin: 4px 0 5px;
+}
+.office-name-actions button {
+  pointer-events: auto;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #2665cf;
+  font-size: 12px;
+  cursor: pointer;
+}
+.position-editor {
+  margin: 0 14px 10px;
+  padding: 13px 15px;
+  background: #f0f6ff;
+  border: 1px solid #bed3f1;
+  border-radius: 10px;
+  display: grid;
+  grid-template-columns: minmax(170px, 1.4fr) 1fr;
+  gap: 8px 16px;
+  align-items: end;
+}
+.position-editor > .row {
+  grid-column: 1 / -1;
+}
+.position-editor small {
+  font-size: 11px;
+  color: #587390;
+}
+.position-editor label {
+  display: block;
+  font-size: 11px;
+  color: #45617e;
+}
+.position-editor select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 7px;
+}
+.position-values {
+  font-size: 12px;
+  color: #325a85;
+}
+.position-arrows {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+.position-arrows button {
+  padding: 7px 4px;
+  font-size: 11px;
+}
+.position-editor .actions {
+  justify-content: flex-end;
+}
+@media (max-width: 700px) {
+  .position-editor {
+    grid-template-columns: 1fr;
+  }
+  .position-editor > .row {
+    grid-column: 1;
+  }
+}
 .hq-world .world-stage {
   min-height: 300px;
+}
+.hq-zone-content {
+  scroll-margin-top: 22px;
+}
+.hq-zone-content > .section-title {
+  margin: 20px 0 12px;
+}
+.hq-event-log {
+  max-height: min(440px, 55vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 10px;
+  scrollbar-gutter: stable;
+}
+.hq-event-log:focus-visible {
+  outline: 2px solid #2768df;
+  outline-offset: 3px;
 }
 .detail-layout {
   display: block;

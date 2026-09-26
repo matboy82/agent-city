@@ -1,4 +1,4 @@
-﻿import "./style.css";
+import "./style.css";
 type Row = Record<string, any>;
 const app = document.querySelector<HTMLDivElement>("#app")!;
 let token = "",
@@ -15,11 +15,23 @@ const portraitUrls = new Map<string, string>();
 const previewDesigns = new Map<string, Row>();
 let navCollapsed = localStorage.getItem("crew.navCollapsed") === "true";
 let activityFilter = localStorage.getItem("crew.activityFilter") || "all";
+let briefDockOpen = localStorage.getItem("crew.briefDock") === "true";
+let officeEditing = false;
+let officePositionDraft: Record<string, number[]> = {};
+let officeSelectedSlot = "primary_desk";
+let cityEditing = false;
+let citySelected = "";
+let cityDraft: Row = {};
+let hqEditing = false;
+let hqSelectedZone = "missions";
+let hqZoneDraft: Record<string, number[]> = {};
 let expanded = false;
 let world: {
     dispose: () => void;
     zoom: (direction: number) => void;
     reset: () => void;
+    moveItem: (slot: string, offset: number[]) => void;
+    moveCityItem: (key: string, position: number[]) => void;
   } | null = null,
   worldKey = "",
   renderVersion = 0,
@@ -101,6 +113,8 @@ function toast(message: string, error = false) {
 }
 async function refresh() {
   data = await api("get_dashboard");
+  data.cityAssets = Array.isArray(data.cityAssets) ? data.cityAssets : [];
+  data.hq ||= { id: "main", revision: 0, position: [0, 0, 0], model: "campus", zones: {} };
   for (const a of data.agents) {
     if (previewDesigns.has(a.id)) {
       a.effectiveDesign = previewDesigns.get(a.id);
@@ -141,6 +155,7 @@ function sceneKey() {
       a?.currentTask,
       a?.name,
       a?.effectiveDesign,
+      a?.officePositions,
       a?.designSource,
       a?.revision,
       data.work.filter((w: Row) => w.raci.responsible.includes(selected))
@@ -153,6 +168,9 @@ function sceneKey() {
       dusk,
       reduced,
       data.buildings,
+      data.cityAssets,
+      data.hq,
+      cityEditing ? cityDraft.model : "",
       data.agents.map((a: Row) => [a.id, a.connection, a.operationalState]),
     ]);
   if (view === "hq")
@@ -160,6 +178,8 @@ function sceneKey() {
       view,
       dusk,
       reduced,
+      data.hq,
+      hqEditing ? hqZoneDraft : null,
       data.work.length,
       data.approvals.filter((a: Row) => a.status === "waiting").length,
       data.handoffs.filter((h: Row) => h.status !== "completed").length,
@@ -230,24 +250,58 @@ const operationalFilters = [
 function filteredActivity() {
   if (activityFilter === "needs_owner") return reviewCards();
   if (activityFilter === "failed")
-    return data.commands.some((c: Row) => c.status === "failed" || c.status === "expired")
-      ? commandRows(data.commands.filter((c: Row) => c.status === "failed" || c.status === "expired"))
+    return data.commands.some(
+      (c: Row) => c.status === "failed" || c.status === "expired",
+    )
+      ? commandRows(
+          data.commands.filter(
+            (c: Row) => c.status === "failed" || c.status === "expired",
+          ),
+        )
       : empty("No failed commands", "There are no failed or expired commands.");
   if (activityFilter === "blocked" || activityFilter === "active") {
-    const matching = data.work.filter((w: Row) => activityFilter === "blocked" ? w.status === "blocked" : ["claimed", "in_progress"].includes(w.status));
-    return matching.map(workCard).join("") || empty("No matching missions", "Work in this state will appear here.");
+    const matching = data.work.filter((w: Row) =>
+      activityFilter === "blocked"
+        ? w.status === "blocked"
+        : ["claimed", "in_progress"].includes(w.status),
+    );
+    return (
+      matching.map(workCard).join("") ||
+      empty("No matching missions", "Work in this state will appear here.")
+    );
   }
-  const agents = data.agents.filter((a: Row) => a.connection.toLowerCase() === activityFilter.toLowerCase());
-  return agents.map((a: Row) => `<button class="crew-row" data-action="office" data-id="${e(a.id)}">${avatar(a)}<strong>${e(a.name)}</strong>${badge(a.connection)}</button>`).join("") || empty("No matching agents", "Connection changes will appear here.");
+  const agents = data.agents.filter(
+    (a: Row) => a.connection.toLowerCase() === activityFilter.toLowerCase(),
+  );
+  return (
+    agents
+      .map(
+        (a: Row) =>
+          `<button class="crew-row" data-action="office" data-id="${e(a.id)}">${avatar(a)}<strong>${e(a.name)}</strong>${badge(a.connection)}</button>`,
+      )
+      .join("") ||
+    empty("No matching agents", "Connection changes will appear here.")
+  );
 }
 function activityControls() {
   return `<div class="actions operational-filters">${operationalFilters.map(([id, title]) => button(title, "activity-filter", `data-filter="${id}" aria-pressed="${activityFilter === id}"`, activityFilter === id ? "primary" : "")).join("")}${button("Save this view", "save-view")}</div><div class="actions saved-views">${(data.savedViews || []).map((v: Row) => `${button(e(v.name), "activity-filter", `data-filter="${e(v.filter)}"`)}${button("×", "delete-view", `data-id="${e(v.id)}" aria-label="Delete saved view ${e(v.name)}"`)}`).join("")}</div>`;
 }
 function city() {
-  return `${heading("YOUR OPERATING WORLD", "Good to see you, Matt.", "A place for your crew. A clear view of what comes next.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}<div class="city-layout"><section class="world-card"><div class="world-title"><div><span class="eyebrow">BIS CAMPUS</span><h2>A world built around your work.</h2></div><span class="live-label"><i></i> LIVE STATE</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Interactive BIS city. Equivalent building buttons below."></canvas><div class="world-loading" id="world-loading">Preparing your campus…</div></div><div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D campus" : "2D view", "flat")}<span>Drag to orbit · Scroll to explore</span></div><div class="building-strip">${button("BIS HQ " + icon("arrow"), "nav", 'data-view="hq"', "hq-building")}${data.buildings.map((b: Row) => button(e(b.name), "building", `data-id="${e(b.id)}"`)).join("")}</div></section></div>`;
+  return `${heading("YOUR OPERATING WORLD", "Good to see you, Matt.", "A place for your crew. A clear view of what comes next.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}<div class="city-layout"><section class="world-card"><div class="world-title"><div><span class="eyebrow">BIS CAMPUS</span><h2>A world built around your work.</h2><div class="office-name-actions">${button(cityEditing ? "Stop editing city" : "Edit city", "toggle-city-edit", `aria-pressed="${cityEditing}"`)}</div></div><span class="live-label"><i></i> LIVE STATE</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Interactive BIS city. Equivalent building buttons below."></canvas><div class="world-loading" id="world-loading">Preparing your campus…</div></div>${cityEditing ? cityEditor() : ""}<div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D campus" : "2D view", "flat")}<span>Drag to orbit · Scroll to explore</span></div><div class="building-strip">${button("BIS HQ " + icon("arrow"), "nav", 'data-view="hq"', "hq-building")}${data.buildings.map((b: Row) => button(e(b.name), "building", `data-id="${e(b.id)}"`)).join("")}</div></section></div>`;
+}
+function briefDock() {
+  return `<aside class="brief-dock" id="brief-dock" aria-label="Floating morning brief"><div class="brief-dock-handle" id="brief-dock-handle"><strong>Morning Brief</strong><span>Drag to move</span>${button("×", "toggle-brief-dock", 'aria-label="Close brief panel"')}</div><div class="brief-dock-body"><div class="brief-dock-stats"><span><strong>${pending().length}</strong> need you</span><span><strong>${data.queue.length}</strong> queued</span></div><h3>Waiting on you</h3>${reviewCards(1)}<h3>Next on the agenda</h3>${
+    data.queue
+      .slice(0, 3)
+      .map(
+        (q: Row) =>
+          `<p class="brief-dock-item"><small>${e(q.timeLabel || "ANYTIME")}</small> ${e(q.text)}</p>`,
+      )
+      .join("") || '<p class="muted">Nothing queued.</p>'
+  }${button("Open focused brief ?", "nav", 'data-view="brief"', "text-button")}</div></aside>`;
 }
 function morningBrief() {
-  return `<aside class="brief"><div class="row"><span class="eyebrow">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", weekday: "long", month: "short", day: "numeric" }).format(new Date())}</span>${button("↻", "sync", 'aria-label="Refresh morning brief"', "icon-button")}</div><h2>Morning Brief<span class="blue">.</span></h2><div class="brief-numbers"><div><strong>${data.agents.filter((a: Row) => a.connection === "Connected" && a.status === "active").length}</strong><small>active agents</small></div><div><strong>${pending().length}</strong><small>need you</small></div><div><strong>${data.queue.length}</strong><small>on the agenda</small></div></div><div class="section-title"><h3>Waiting on you</h3><span>${pending().length.toString().padStart(2, "0")}</span></div>${reviewCards(2)}<div class="section-title"><h3>Queued for today</h3>${button(icon("plus"), "add-queue", 'aria-label="Add queue item"', "icon-button")}</div><div class="queue-list">${
+  return `<aside class="brief"><div class="row"><span class="eyebrow">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", weekday: "long", month: "short", day: "numeric" }).format(new Date())}</span>${button("?", "sync", 'aria-label="Refresh morning brief"', "icon-button")}</div><h2>Morning Brief<span class="blue">.</span></h2><div class="brief-numbers"><div><strong>${data.agents.filter((a: Row) => a.connection === "Connected" && a.status === "active").length}</strong><small>active agents</small></div><div><strong>${pending().length}</strong><small>need you</small></div><div><strong>${data.queue.length}</strong><small>on the agenda</small></div></div><div class="section-title"><h3>Waiting on you</h3><span>${pending().length.toString().padStart(2, "0")}</span></div>${reviewCards(2)}<div class="section-title"><h3>Queued for today</h3>${button(icon("plus"), "add-queue", 'aria-label="Add queue item"', "icon-button")}</div><div class="queue-list">${
     data.queue
       .slice(0, 6)
       .map(
@@ -278,8 +332,83 @@ const zones = [
   ["team", "Collaboration"],
   ["review", "Review room"],
 ];
+const buildingStyles: [string, string][] = [
+  ["command", "Command hub · operations"],
+  ["exchange", "Exchange · markets"],
+  ["tower", "Signal tower · communications"],
+  ["lab", "Research lab · analysis"],
+  ["studio", "Creative studio · design"],
+  ["workshop", "Build workshop · delivery"],
+];
+const buildingModels: [string, string][] = [
+  ["campus", "Blue and white campus architecture"],
+  ["hangar_a", "Open hangar pavilion"],
+  ["hangar_b", "Deep hangar"],
+  ["glass_atrium", "Round glass atrium"],
+  ["detailed_hub", "Detailed operations hub"],
+  ["skyscraper", "Glass skyscraper"],
+  ["office_building", "Multi-story office building"],
+  ["big_box", "Big-box campus building"],
+  ["warehouse", "Warehouse and loading bays"],
+];
+const cityAssetModels: [string, string][] = [
+  ["planter", "Campus planter"],
+  ["small_tree", "Small tree"],
+  ["satellite_dish", "Satellite dish"],
+  ["rock_cluster", "Rock garden"],
+  ["landing_pad", "Landing pad"],
+];
+function selectCity(key: string) {
+  citySelected = key;
+  const row = key === "hq" ? data.hq : key.startsWith("building:")
+    ? data.buildings.find((b: Row) => b.id === key.slice(9))
+    : data.cityAssets.find((a: Row) => a.id === key.slice(6));
+  cityDraft = row
+    ? key === "hq"
+      ? { position: [...row.position], model: row.model || "campus" }
+      : key.startsWith("building:")
+      ? { position: [row.x, row.y || 0, row.z], model: row.model || "campus" }
+      : { position: [...row.position], asset: row.asset }
+    : {};
+}
+function cityEditor() {
+  const building = citySelected === "hq" || citySelected.startsWith("building:");
+  const row = citySelected === "hq" ? data.hq : building
+    ? data.buildings.find((b: Row) => b.id === citySelected.slice(9))
+    : data.cityAssets.find((a: Row) => a.id === citySelected.slice(6));
+  const options = [
+    ["hq", "BIS HQ"],
+    ...data.buildings.map((b: Row) => [`building:${b.id}`, b.name]),
+    ...data.cityAssets.map((a: Row) => [
+      `asset:${a.id}`,
+      `${label(a.asset)} · ${a.id.slice(0, 6)}`,
+    ]),
+  ];
+  return `<div class="position-editor city-editor"><div class="row"><strong>City editor</strong><small>Click a building or asset to select it</small></div><label>Selected item<select id="city-item">${options.map(([id, name]) => `<option value="${e(id)}" ${id === citySelected ? "selected" : ""}>${e(name)}</option>`).join("")}</select></label>${
+    row
+      ? `<label>${building ? "Building model" : "Asset model"}<select id="city-model">${(building ? buildingModels : cityAssetModels).map(([id, name]) => `<option value="${e(id)}" ${id === (building ? cityDraft.model : cityDraft.asset) ? "selected" : ""}>${e(name)}</option>`).join("")}</select></label><div class="position-values" id="city-values">Position: ${cityDraft.position.map((n: number) => n.toFixed(2)).join(" / ")} m</div><label>Step<select id="city-step"><option value="0.1">10 cm</option><option value="0.5" selected>50 cm</option><option value="1">1 m</option></select></label><div class="position-arrows">${[
+          ["Left", 0, -1],
+          ["Right", 0, 1],
+          ["Down", 1, -1],
+          ["Up", 1, 1],
+          ["Back", 2, -1],
+          ["Front", 2, 1],
+        ]
+          .map(([name, axis, direction]) =>
+            button(
+              String(name),
+              "city-move",
+              `data-axis="${axis}" data-direction="${direction}"`,
+            ),
+          )
+          .join(
+            "",
+          )}</div><div class="actions">${button("Reset position", "city-reset")}${button("Save item", "city-save", "", "primary")}${building && citySelected !== "hq" ? button("Building details", "building-edit", `data-id="${e(row.id)}"`) : !building ? button("Remove asset", "city-remove") : ""}</div>`
+      : ""
+  }<div class="actions"><select id="city-add-model" aria-label="Asset to add">${cityAssetModels.map(([id, name]) => `<option value="${id}">${e(name)}</option>`).join("")}</select>${button("Add campus asset", "city-add", "", "primary")}</div><small>Model and position changes preview in the city. Save each item to keep it.</small></div>`;
+}
 function workCard(w: Row) {
-  return `<article class="mission-card"><div class="row"><span class="priority ${e(w.priority)}">${e(w.priority)} priority</span>${badge(w.status)}</div><button class="mission-title" data-action="mission" data-id="${e(w.id)}">${e(w.title)}</button><p>${e(w.brief)}</p><div class="mission-footer"><span>${w.raci.responsible.map((a: string) => e(agent(a)?.name || a)).join(", ")} <small>→ Matt accountable</small></span><span>rev ${w.revision}</span></div>${w.paused ? '<p class="warning">Paused · new dispatch blocked</p>' : ""}<div class="actions">${["planned", "ready", "blocked"].includes(w.status) ? button("Dispatch " + icon("arrow"), "dispatch", `data-id="${e(w.id)}"`, "primary small") : ""}${button("Inspect", "mission", `data-id="${e(w.id)}"`, "small")}${!["done", "canceled"].includes(w.status) ? button(w.paused ? "Resume" : "Pause", "work-control", `data-id="${e(w.id)}" data-operation="${w.paused ? "resume" : "pause"}"`, "small") : ""}</div></article>`;
+  return `<article class="mission-card"><div class="row"><span class="priority ${e(w.priority)}">${e(w.priority)} priority</span>${badge(w.status)}</div><button class="mission-title" data-action="mission" data-id="${e(w.id)}">${e(w.title)}</button><p>${e(w.brief)}</p><div class="mission-footer"><span>${w.raci.responsible.map((a: string) => e(agent(a)?.name || a)).join(", ")} <small>? Matt accountable</small></span><span>rev ${w.revision}</span></div>${w.paused ? '<p class="warning">Paused · new dispatch blocked</p>' : ""}<div class="actions">${["planned", "ready", "blocked"].includes(w.status) ? button("Dispatch " + icon("arrow"), "dispatch", `data-id="${e(w.id)}"`, "primary small") : ""}${button("Inspect", "mission", `data-id="${e(w.id)}"`, "small")}${!["done", "canceled"].includes(w.status) ? button(w.paused ? "Resume" : "Pause", "work-control", `data-id="${e(w.id)}" data-operation="${w.paused ? "resume" : "pause"}"`, "small") : ""}</div></article>`;
 }
 function artifacts(rows: Row[]) {
   return (
@@ -305,6 +434,10 @@ function commandRows(rows: Row[]) {
 function messageCard(m: Row) {
   return `<article class="message"><div class="row"><strong>${e(m.author === "matt" ? "Matt" : m.author)}</strong>${badge(m.status)}</div><p>${e(m.body)}</p><small>${time(m.createdAt)} · ${e(m.scope)}</small>${m.reply ? `<blockquote><strong>${e(agent(m.agentId)?.name)}</strong><p>${e(m.reply)}</p></blockquote>` : ""}${m.scope === "private" ? button("Promote to mission thread", "promote", `data-id="${e(m.id)}"`, "text-button small") : ""}</article>`;
 }
+function hqPositionEditor() {
+  const offset = hqZoneDraft[hqSelectedZone] || [0, 0, 0];
+  return `<div class="position-editor"><div class="row"><strong>HQ room editor</strong><small>Click a desk or choose a zone</small></div><label>Desk<select id="hq-zone-item">${zones.map(([id, name]) => `<option value="${id}" ${id === hqSelectedZone ? "selected" : ""}>${name}</option>`).join("")}</select></label><div class="position-values" id="hq-position-values">Offset: ${offset.map((v) => v.toFixed(2)).join(" / ")} m</div><label>Step<select id="hq-step"><option value="0.1">10 cm</option><option value="0.25" selected>25 cm</option><option value="0.5">50 cm</option></select></label><div class="position-arrows">${[["Left",0,-1],["Right",0,1],["Down",1,-1],["Up",1,1],["Back",2,-1],["Front",2,1]].map(([name,axis,direction]) => button(String(name), "hq-move", `data-axis="${axis}" data-direction="${direction}"`)).join("")}</div><div class="actions">${button("Reset desk", "hq-reset")}${button("Save room", "hq-save", "", "primary")}</div><small>Changes preview in the room. Save to keep them.</small></div>`;
+}
 function hq() {
   let content = "";
   if (tab === "missions" || tab === "dispatch")
@@ -312,13 +445,13 @@ function hq() {
   if (tab === "review")
     content = `<div class="mission-grid">${reviewCards()}</div><h2 class="spaced">Delivered evidence</h2>${artifacts(data.artifacts)}`;
   if (tab === "ops")
-    content = `<div class="lower-grid"><section class="panel"><h2>Runtime health</h2>${roster()}</section><section class="panel"><h2>Command delivery</h2>${commandRows(data.commands)}</section></div><section class="panel spaced">${timeline()}</section>`;
+    content = `<div class="lower-grid"><section class="panel"><h2>Runtime health</h2>${roster()}</section><section class="panel"><h2>Command delivery</h2>${commandRows(data.commands)}</section></div><section class="panel spaced"><h2>Event log</h2><div class="hq-event-log" role="region" aria-label="HQ event log" tabindex="0">${timeline()}</div></section>`;
   if (tab === "handoffs")
     content =
       data.handoffs
         .map(
           (h: Row) =>
-            `<article class="panel"><div class="row"><h3>${e(agent(h.from)?.name)} → ${e(agent(h.to)?.name)}</h3>${badge(h.status)}</div><p>${e(h.context)}</p>${h.status === "requested" ? button("Accept handoff", "handoff", `data-id="${e(h.id)}" data-accept="true"`, "primary") + button("Reject", "handoff", `data-id="${e(h.id)}" data-accept="false"`) : ""}</article>`,
+            `<article class="panel"><div class="row"><h3>${e(agent(h.from)?.name)} ? ${e(agent(h.to)?.name)}</h3>${badge(h.status)}</div><p>${e(h.context)}</p>${h.status === "requested" ? button("Accept handoff", "handoff", `data-id="${e(h.id)}" data-accept="true"`, "primary") + button("Reject", "handoff", `data-id="${e(h.id)}" data-accept="false"`) : ""}</article>`,
         )
         .join("") ||
       empty(
@@ -336,7 +469,34 @@ function hq() {
         "Promote an office note into a mission thread explicitly.",
       )
     }</section>`;
-  return `${heading("BIS HEADQUARTERS", "Move the team forward.", "Responsibility, execution, and evidence. All in one place.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}${pending().length ? `<div class="attention-bar">${pending().length} decisions need your attention. ${button("Open review room →", "tab", 'data-tab="review"', "text-button")}</div>` : ""}<section class="world-card hq-world"><div class="world-title"><div><span class="eyebrow">THE SHARED FLOOR</span><h2>One team. Six ways to move work forward.</h2></div></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="BIS HQ zones; equivalent controls below"></canvas><div class="world-loading" id="world-loading">Preparing headquarters…</div></div></section><nav class="tabs" aria-label="HQ zones">${zones.map(([id, name]) => button(name, "tab", `data-tab="${id}" aria-current="${tab === id ? "page" : "false"}"`, tab === id ? "active" : "")).join("")}</nav>${content}`;
+  return `${heading("BIS HEADQUARTERS", "Move the team forward.", "Responsibility, execution, and evidence. All in one place.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}${pending().length ? `<div class="attention-bar">${pending().length} decisions need your attention. ${button("Open review room →", "tab", 'data-tab="review"', "text-button")}</div>` : ""}<section class="world-card hq-world"><div class="world-title"><div><span class="eyebrow">THE SHARED FLOOR</span><h2>One team. Six ways to move work forward.</h2><div class="office-name-actions">${button(hqEditing ? "Stop editing HQ" : "Edit HQ", "toggle-hq-edit", `aria-pressed="${hqEditing}"`)}</div></div></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="BIS HQ zones; equivalent controls below"></canvas><div class="world-loading" id="world-loading">Preparing headquarters…</div></div>${hqEditing ? hqPositionEditor() : ""}</section><nav class="tabs" aria-label="HQ zones">${zones.map(([id, name]) => button(name, "tab", `data-tab="${id}" aria-current="${tab === id ? "page" : "false"}"`, tab === id ? "active" : "")).join("")}</nav><section class="hq-zone-content" id="hq-zone-content" tabindex="-1"><div class="section-title"><h2>${e(zones.find(([id]) => id === tab)?.[1] || "HQ")}</h2><span class="eyebrow">HQ STATION</span></div>${content}</section>`;
+}
+function officePositionEditor(a: Row) {
+  const placements = [
+    ...data.themes[a.effectiveDesign.theme].placements,
+    ...a.effectiveDesign.placements,
+  ];
+  const slots = [...new Set(placements.map((p: Row) => p.slot))];
+  if (!slots.includes(officeSelectedSlot)) officeSelectedSlot = slots[0];
+  const offset = officePositionDraft[officeSelectedSlot] || [0, 0, 0];
+  return `<div class="position-editor"><div class="row"><strong>Position editor</strong><small>Click an item or choose it below</small></div><label>Item<select id="position-slot">${slots.map((slot: string) => `<option value="${e(slot)}" ${slot === officeSelectedSlot ? "selected" : ""}>${e(label(slot))}</option>`).join("")}</select></label><div class="position-values" id="position-values">Offset: ${offset.map((v: number) => v.toFixed(2)).join(" / ")} m</div><div class="position-step"><label>Step<select id="position-step"><option value="0.05">5 cm</option><option value="0.1" selected>10 cm</option><option value="0.25">25 cm</option></select></label></div><div class="position-arrows">${[
+    ["Left", 0, -1],
+    ["Right", 0, 1],
+    ["Down", 1, -1],
+    ["Up", 1, 1],
+    ["Back", 2, -1],
+    ["Front", 2, 1],
+  ]
+    .map(([name, axis, direction]) =>
+      button(
+        String(name),
+        "office-move",
+        `data-axis="${axis}" data-direction="${direction}"`,
+      ),
+    )
+    .join(
+      "",
+    )}</div><div class="actions">${button("Reset item", "office-reset-item")}${button("Save positions", "office-save-positions", "", "primary")}</div><small>Changes preview immediately. Save to keep them.</small></div>`;
 }
 function office(details = false) {
   const a = agent(selected);
@@ -346,7 +506,8 @@ function office(details = false) {
       a.id,
     ),
   );
-  return `${button("← Back to city", "nav", 'data-view="city"', "text-button back")}${heading(a.role, details ? `${e(a.name)} - details` : `${e(a.name)}’s office`, a.currentTask || "No task reported. This space is ready when they are.", (details ? button("Enter office", "office", `data-id="${e(a.id)}"`) : "") + button("Design office", "design", `data-id="${e(a.id)}"`) + button("Connection", "connect", `data-id="${e(a.id)}"`, "primary"))}<div class="office-layout ${details ? "detail-layout" : ""}">${details ? "" : `<section class="world-card office-world"><div class="world-title"><div class="row">${avatar(a)}<div><h2>${e(a.name)}</h2>${badge(a.connection)}</div></div><span class="eyebrow">${e(label(a.effectiveDesign.theme))}</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Agent office; operational controls are below"></canvas><div id="world-loading" class="world-loading">Preparing office…</div></div><div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D office" : "2D view", "flat")}<span>${e(a.designSource)} · revision ${a.revision}</span></div></section>`}<section class="panel conversation"><div class="section-title"><h2>Direct conversation</h2><span class="eyebrow">PRIVATE</span></div><p class="muted compact">A note is queued until the runtime confirms delivery.</p><div class="messages">${
+  const building = data.buildings.find((b: Row) => b.agentId === a.id);
+  return `${button("← Back to city", "nav", 'data-view="city"', "text-button back")}${heading(a.role, details ? `${e(a.name)} - details` : `${e(a.name)}’s office`, a.currentTask || "No task reported. This space is ready when they are.", (details ? button("Enter office", "office", `data-id="${e(a.id)}"`) : "") + button("Design office", "design", `data-id="${e(a.id)}"`) + (building ? button("Edit building", "building-edit", `data-id="${e(building.id)}"`) : "") + button("Connection", "connect", `data-id="${e(a.id)}"`, "primary"))}<div class="office-layout ${details ? "detail-layout" : ""}">${details ? "" : `<section class="world-card office-world ${officeEditing ? "office-editing" : ""}"><div class="world-title"><div class="row">${avatar(a)}<div><h2>${e(a.name)}</h2><div class="office-name-actions">${button("? " + (officeEditing ? "Stop editing positions" : "Edit positions"), "toggle-office-edit", `aria-pressed="${officeEditing}"`)}</div>${badge(a.connection)}</div></div><span class="eyebrow">${e(label(a.effectiveDesign.theme))}</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Agent office; operational controls are below"></canvas><div id="world-loading" class="world-loading">Preparing office…</div></div>${officeEditing ? officePositionEditor(a) : ""}<div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D office" : "2D view", "flat")}<span>${e(a.designSource)} · revision ${a.revision}</span></div></section>`}<section class="panel conversation"><div class="section-title"><h2>Direct conversation</h2><span class="eyebrow">PRIVATE</span></div><p class="muted compact">A note is queued until the runtime confirms delivery.</p><div class="messages">${
     data.messages
       .filter((m: Row) => m.agentId === a.id && m.scope === "private")
       .reverse()
@@ -369,14 +530,31 @@ function crew() {
     .join("")}</div>`;
 }
 function budgetPanel() {
-  return `<section class="panel spaced"><div class="section-title"><h2>Resource budgets</h2>${button("Add budget", "budget-new", "", "primary")}</div><p class="muted">Usage is recorded from verified amounts, never guessed from agent activity. Reaching a hard limit blocks matching mission dispatch.</p><div class="budget-grid">${(data.budgets || []).map((b: Row) => {
-    const used = Number(b.used || 0);
-    const state = used >= b.hardLimit ? "Hard limit reached" : used >= b.softLimit ? "Soft limit reached" : "Within budget";
-    return `<article class="budget-card"><div class="row"><strong>${e(b.name)}</strong>${badge(state)}</div><p>${e(label(b.scope))} · ${e(b.period)} · ${e(b.unit)}</p><strong>${used.toLocaleString()} / ${Number(b.hardLimit).toLocaleString()} ${e(b.unit)}</strong><progress value="${Math.min(used, b.hardLimit)}" max="${b.hardLimit}" aria-label="${e(b.name)} usage"></progress><small>Soft warning at ${Number(b.softLimit).toLocaleString()} · ${Math.max(0, b.hardLimit - used).toLocaleString()} remaining</small><div class="actions">${button("Record usage", "budget-usage", `data-id="${e(b.id)}"`)}${used ? "" : button("Delete", "budget-delete", `data-id="${e(b.id)}"`)}</div>${data.budgetEntries.filter((entry: Row) => entry.budgetId === b.id).slice(-3).reverse().map((entry: Row) => `<small>${time(entry.at)} · ${e(entry.note)} · ${Number(entry.amount).toLocaleString()} ${e(b.unit)}</small>`).join("")}</article>`;
-  }).join("") || '<p class="muted">No resource budgets configured.</p>'}</div></section>`;
+  return `<section class="panel spaced"><div class="section-title"><h2>Resource budgets</h2>${button("Add budget", "budget-new", "", "primary")}</div><p class="muted">Usage is recorded from verified amounts, never guessed from agent activity. Reaching a hard limit blocks matching mission dispatch.</p><div class="budget-grid">${
+    (data.budgets || [])
+      .map((b: Row) => {
+        const used = Number(b.used || 0);
+        const state =
+          used >= b.hardLimit
+            ? "Hard limit reached"
+            : used >= b.softLimit
+              ? "Soft limit reached"
+              : "Within budget";
+        return `<article class="budget-card"><div class="row"><strong>${e(b.name)}</strong>${badge(state)}</div><p>${e(label(b.scope))} · ${e(b.period)} · ${e(b.unit)}</p><strong>${used.toLocaleString()} / ${Number(b.hardLimit).toLocaleString()} ${e(b.unit)}</strong><progress value="${Math.min(used, b.hardLimit)}" max="${b.hardLimit}" aria-label="${e(b.name)} usage"></progress><small>Soft warning at ${Number(b.softLimit).toLocaleString()} · ${Math.max(0, b.hardLimit - used).toLocaleString()} remaining</small><div class="actions">${button("Record usage", "budget-usage", `data-id="${e(b.id)}"`)}${used ? "" : button("Delete", "budget-delete", `data-id="${e(b.id)}"`)}</div>${data.budgetEntries
+          .filter((entry: Row) => entry.budgetId === b.id)
+          .slice(-3)
+          .reverse()
+          .map(
+            (entry: Row) =>
+              `<small>${time(entry.at)} · ${e(entry.note)} · ${Number(entry.amount).toLocaleString()} ${e(b.unit)}</small>`,
+          )
+          .join("")}</article>`;
+      })
+      .join("") || '<p class="muted">No resource budgets configured.</p>'
+  }</div></section>`;
 }
 function settings() {
-  return `${heading("WORKSPACE", "Make it yours.", "BIS · America/Denver · portable, persistent storage")}<div class="lower-grid"><section class="panel"><h2>Experience</h2><div class="setting"><span>Lighting<small>Bright day or a quieter dusk</small></span>${button(dusk ? "Dusk" : "Day", "dusk")}</div><div class="setting"><span>Graphics<small>All operational controls work in 2D</small></span>${button(flat ? "2D interface" : "3D world", "flat")}</div><div class="setting"><span>Reduced motion<small>Keep state. Reduce movement.</small></span>${button(reduced ? "On" : "Off", "motion")}</div><h2 class="spaced">Owner access</h2><p class="muted">Sessions expire after 12 hours. Your passphrase has no reset flow.</p>${button("Sign out", "logout")}</section><section class="panel"><h2>Morning synchronization</h2><p>Daily at 5:55 AM America/Denver. Source refresh runs on the server without an open browser.</p><p class="muted">Configure read-only Google Calendar and GitHub access on the server.</p>${button("Refresh now", "sync", "", "primary")}<pre>${e(JSON.stringify(data.sync || { status: "unconfigured" }, null, 2))}</pre></section></div><section class="panel spaced"><div class="section-title"><h2>Routines</h2>${button("Add routine", "routine")}</div>${data.routines.map((r: Row) => `<div class="queue-row"><strong>${e(r.title)}</strong><span>${e(r.time)} Denver · ${r.enabled ? "Enabled" : "Disabled"} · ${e(r.lastResult || "Not run")}</span>${button(r.enabled ? "Pause" : "Enable", "pause-routine", `data-id="${e(r.id)}"`)}</div>`).join("") || '<p class="muted">No recurring work. Routines create planned work for owner dispatch.</p>'}</section><section class="panel spaced"><h2>Assets & credits</h2><p>Furniture Kit and Space Kit by <a href="https://kenney.nl/assets" target="_blank" rel="noopener">Kenney</a> · CC0. Supplied Jeff and Relay portraits and prototype character assets preserved from the Crew OS experiment.</p><div class="credit-grid">${Object.values(
+  return `${heading("WORKSPACE", "Make it yours.", "BIS · America/Denver · portable, persistent storage")}<div class="lower-grid"><section class="panel"><h2>Experience</h2><div class="setting"><span>Lighting<small>Bright day or a quieter dusk</small></span>${button(dusk ? "Dusk" : "Day", "dusk")}</div><div class="setting"><span>Graphics<small>All operational controls work in 2D</small></span>${button(flat ? "2D interface" : "3D world", "flat")}</div><div class="setting"><span>Reduced motion<small>Keep state. Reduce movement.</small></span>${button(reduced ? "On" : "Off", "motion")}</div><h2 class="spaced">Owner access</h2><p class="muted">Sessions expire after 12 hours. Your passphrase has no reset flow.</p>${button("Sign out", "logout")}</section><section class="panel"><h2>Morning synchronization</h2><p>Daily at 5:55 AM America/Denver. Source refresh runs on the server without an open browser.</p><p class="muted">Configure read-only Google Calendar and GitHub access on the server.</p>${button("Refresh now", "sync", "", "primary")}<pre>${e(JSON.stringify(data.sync || { status: "unconfigured" }, null, 2))}</pre></section></div><section class="panel spaced"><div class="section-title"><h2>Routines</h2>${button("Add routine", "routine")}</div>${data.routines.map((r: Row) => `<div class="queue-row"><strong>${e(r.title)}</strong><span>${e(r.time)} Denver · ${r.enabled ? "Enabled" : "Disabled"} · ${e(r.lastResult || "Not run")}</span>${button(r.enabled ? "Pause" : "Enable", "pause-routine", `data-id="${e(r.id)}"`)}</div>`).join("") || '<p class="muted">No recurring work. Routines create planned work for owner dispatch.</p>'}</section><section class="panel spaced"><h2>Assets & credits</h2><p>Furniture Kit and Space Kit by <a href="https://kenney.nl/assets" target="_blank" rel="noopener">Kenney</a> · CC0. Supplied Jeff and Relay portraits; Relay’s new GLB is modeled from her portrait. Other character bodies came from the Crew OS experiment.</p><div class="credit-grid">${Object.values(
     data.catalog,
   )
     .map(
@@ -388,11 +566,57 @@ function settings() {
 function project() {
   const b = data.buildings.find((b: Row) => b.id === selected);
   if (!b) return empty("Project not found", "Return to the city.");
+  if (b.kind === "reserved_plot")
+    return `${button("← Back to city", "nav", 'data-view="city"', "text-button back")}${heading("RESERVED PLOT", "Ready for next project.", "This campus plot keeps its place after a project retires.", button("Start a project here", "building-new", `data-id="${e(b.id)}"`, "primary"))}<section class="panel"><h2>Plot history</h2>${
+      (b.projectHistory || [])
+        .slice()
+        .reverse()
+        .map(
+          (entry: Row) =>
+            `<p>${e(entry.name)} · retired ${time(entry.retiredAt)}</p>`,
+        )
+        .join("") || '<p class="muted">No previous project on this plot.</p>'
+    }</section>`;
   const work = data.work.filter((w: Row) => b.goalId && w.goalId === b.goalId);
-  return `${button("← Back to city", "nav", 'data-view="city"', "text-button")}${heading("PROJECT WORKSPACE", e(b.name), "Work and evidence linked by goal ID.", button("Add milestone", "milestone-new", `data-id="${e(b.id)}"`))}<section class="panel"><h2>Verified milestones</h2>${(b.milestones || []).map((m: Row) => `<div class="command-row"><div><strong>${e(m.title)}</strong><small>${m.closedAt ? time(m.closedAt) : "Open · no progress inferred"}</small></div>${m.status === "closed" ? badge("completed") : button("Verify completion", "milestone-close", `data-id="${e(b.id)}" data-milestone="${e(m.id)}"`)}</div>`).join("") || '<p class="muted">Add named milestones. Construction advances only when completion is verified.</p>'}</section><div class="mission-grid spaced">${work.map(workCard).join("") || empty("No linked work", "Create work linked to this project’s goal.")}</div><section class="panel spaced"><h2>Project evidence</h2>${artifacts(data.artifacts.filter((a: Row) => work.some((w: Row) => w.id === a.workId)))}</section>`;
+  const lifecycle = b.lifecycle || "planning";
+  const nextStates: Record<string, string[]> = {
+    planning: ["building"],
+    building: ["planning", "running"],
+    running: ["building", "complete"],
+    complete: ["running"],
+  };
+  const stateActions = (nextStates[lifecycle] || [])
+    .map((state: string) =>
+      button(
+        state === "building"
+          ? "Start construction"
+          : state === "running"
+            ? "Open for work"
+            : state === "complete"
+              ? "Mark complete"
+              : "Return to planning",
+        "project-state",
+        `data-id="${e(b.id)}" data-state="${state}"`,
+      ),
+    )
+    .join("");
+  return `${button("← Back to city", "nav", 'data-view="city"', "text-button")}${heading("PROJECT WORKSPACE", e(b.name), "Work and evidence linked by goal ID.", button("Edit building", "building-edit", `data-id="${e(b.id)}"`) + button("Add milestone", "milestone-new", `data-id="${e(b.id)}"`))}<section class="panel lifecycle-panel"><div class="row"><h2>Building lifecycle</h2>${badge(lifecycle)}</div><p>Planning shows a prepared plot. Construction shows scaffolding. Running and complete show the finished ${e(label(b.style))} building.</p><div class="actions">${stateActions}${button("Retire project", "project-retire", `data-id="${e(b.id)}"`)}</div>${(
+    b.lifecycleHistory || []
+  )
+    .slice(-4)
+    .reverse()
+    .map(
+      (change: Row) =>
+        `<small>${time(change.at)} · ${e(label(change.from))} → ${e(label(change.to))}: ${e(change.note)}</small>`,
+    )
+    .join(
+      "",
+    )}</section><section class="panel spaced"><h2>Verified milestones</h2>${(b.milestones || []).map((m: Row) => `<div class="command-row"><div><strong>${e(m.title)}</strong><small>${m.closedAt ? time(m.closedAt) : "Open · no progress inferred"}</small></div>${m.status === "closed" ? badge("completed") : button("Verify completion", "milestone-close", `data-id="${e(b.id)}" data-milestone="${e(m.id)}"`)}</div>`).join("") || '<p class="muted">Add named milestones. Lifecycle transitions are owner controlled.</p>'}</section><div class="mission-grid spaced">${work.map(workCard).join("") || empty("No linked work", "Create work linked to this project’s goal.")}</div><section class="panel spaced"><h2>Project evidence</h2>${artifacts(data.artifacts.filter((a: Row) => work.some((w: Row) => w.id === a.workId)))}</section>`;
 }
 
 async function render(preserveWorld = false) {
+  if (view !== "office") officeEditing = false;
+  if (view !== "city") cityEditing = false;
   const version = ++renderVersion;
   const nextWorldKey = sceneKey();
   const retainedStage =
@@ -448,7 +672,7 @@ async function render(preserveWorld = false) {
     )
     .join(
       "",
-    )}</nav></div><div class="sidebar-bottom"><div class="workspace-health"><span class="health-dot"></span><div>All work, one place.<small>${data.agents.filter((a: Row) => a.connection === "Connected").length} of ${data.agents.length} agents connected</small></div></div>${button(icon("settings") + "<span>Settings & credits</span>", "nav", 'data-view="settings" aria-label="Settings and credits" title="Settings and credits"', view === "settings" ? "nav-link active" : "nav-link")}<div class="owner"><span class="owner-avatar">M</span><div><strong>Matt</strong><small>Workspace owner</small></div>${button("↪", "logout", 'aria-label="Sign out"', "icon-button")}</div></div></aside><div class="main-shell"><header class="topbar">${button(icon("nav"), "toggle-nav", `aria-label="${navCollapsed ? "Expand" : "Collapse"} navigation" aria-expanded="${!navCollapsed}"`, "icon-button nav-toggle")}<div class="breadcrumb">BIS <span>/</span> ${e(view === "office" ? agent(selected)?.name : view === "hq" ? "Headquarters" : label(view))}</div><div class="topbar-right">${button(icon("settings"), "nav", 'data-view="settings" aria-label="Settings and credits"', "mobile-settings icon-button")}<span class="timezone">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", hour: "numeric", minute: "2-digit" }).format(new Date())} <small>DENVER</small></span>${button(icon("pause") + (data.config.stopped ? " Dispatch stopped" : " Stop dispatch"), "stop", "", data.config.stopped ? "stop-button stopped" : "stop-button")}</div></header><main>${view === "city" ? city() : view === "hq" ? hq() : view === "office" ? office() : view === "agent" ? office(true) : ["brief", "agenda", "reviews", "goals"].includes(view) ? focusedPage() : view === "crew" ? crew() : view === "settings" ? settings() : view === "project" ? project() : heading("AUDIT TRAIL", "Every action has a history.", "Immutable records from the owner, agents, and scheduler.") + '<section class="panel"><label class="search-field">' + icon("search") + '<input id="event-search" placeholder="Search event, actor, or entity…" aria-label="Search activity"></label><div id="event-results">' + timeline() + "</div></section>"}</main><footer>BIS / CREW OS <span>Built for real work. Made to feel alive.</span><span>America/Denver</span></footer></div></div>`;
+    )}</nav></div><div class="sidebar-bottom"><div class="workspace-health"><span class="health-dot"></span><div>All work, one place.<small>${data.agents.filter((a: Row) => a.connection === "Connected").length} of ${data.agents.length} agents connected</small></div></div>${button(icon("settings") + "<span>Settings & credits</span>", "nav", 'data-view="settings" aria-label="Settings and credits" title="Settings and credits"', view === "settings" ? "nav-link active" : "nav-link")}<div class="owner"><span class="owner-avatar">M</span><div><strong>Matt</strong><small>Workspace owner</small></div>${button("?", "logout", 'aria-label="Sign out"', "icon-button")}</div></div></aside><div class="main-shell"><header class="topbar">${button(icon("nav"), "toggle-nav", `aria-label="${navCollapsed ? "Expand" : "Collapse"} navigation" aria-expanded="${!navCollapsed}"`, "icon-button nav-toggle")}<div class="breadcrumb">BIS <span>/</span> ${e(view === "office" ? agent(selected)?.name : view === "hq" ? "Headquarters" : label(view))}</div><div class="topbar-right">${button(icon("settings"), "nav", 'data-view="settings" aria-label="Settings and credits"', "mobile-settings icon-button")}<span class="timezone">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", hour: "numeric", minute: "2-digit" }).format(new Date())} <small>DENVER</small></span>${button(icon("pause") + (data.config.stopped ? " Dispatch stopped" : " Stop dispatch"), "stop", "", data.config.stopped ? "stop-button stopped" : "stop-button")}</div></header><main>${view === "city" ? city() : view === "hq" ? hq() : view === "office" ? office() : view === "agent" ? office(true) : ["brief", "agenda", "reviews", "goals"].includes(view) ? focusedPage() : view === "crew" ? crew() : view === "settings" ? settings() : view === "project" ? project() : heading("AUDIT TRAIL", "Every action has a history.", "Immutable records from the owner, agents, and scheduler.") + '<section class="panel"><label class="search-field">' + icon("search") + '<input id="event-search" placeholder="Search event, actor, or entity…" aria-label="Search activity"></label><div id="event-results">' + timeline() + "</div></section>"}</main><footer>BIS / CREW OS <span>Built for real work. Made to feel alive.</span><span>America/Denver</span></footer></div></div>`;
   if (retainedStage)
     document.querySelector(".world-stage")?.replaceWith(retainedStage);
   if (view === "activity") {
@@ -456,7 +680,8 @@ async function render(preserveWorld = false) {
     search?.insertAdjacentHTML("beforebegin", activityControls());
     if (search) search.hidden = activityFilter !== "all";
     if (activityFilter !== "all")
-      document.querySelector<HTMLElement>("#event-results")!.innerHTML = filteredActivity();
+      document.querySelector<HTMLElement>("#event-results")!.innerHTML =
+        filteredActivity();
   }
   const viewer = document.querySelector<HTMLElement>(".world-card");
   if (viewer) {
@@ -465,7 +690,92 @@ async function render(preserveWorld = false) {
       "afterbegin",
       `<div class="viewer-controls">${view === "office" ? button("Agent details", "agent-detail", `data-id="${e(selected)}"`) : ""}${view !== "city" ? button("Return to city", "nav", 'data-view="city"') : ""}${button("&minus;", "zoom-out", 'aria-label="Zoom out"')}${button("+", "zoom-in", 'aria-label="Zoom in"')}${button("Reset view", "reset-camera")}${button(expanded ? "Exit full screen" : "Full screen", "fullscreen", `aria-pressed="${expanded}"`)}</div>`,
     );
+    if (view === "city") {
+      viewer
+        .querySelector(".viewer-controls")
+        ?.insertAdjacentHTML(
+          "afterbegin",
+          button(
+            briefDockOpen ? "Hide brief" : "Show brief",
+            "toggle-brief-dock",
+            `aria-pressed="${briefDockOpen}"`,
+          ),
+        );
+      if (briefDockOpen) {
+        viewer.insertAdjacentHTML("beforeend", briefDock());
+        const dock = viewer.querySelector<HTMLElement>("#brief-dock")!;
+        const saved = JSON.parse(
+          localStorage.getItem("crew.briefDockPosition") || "null",
+        );
+        const place = (x: number, y: number) => {
+          dock.style.left = `${Math.max(8, Math.min(x, viewer.clientWidth - dock.offsetWidth - 8))}px`;
+          dock.style.top = `${Math.max(55, Math.min(y, viewer.clientHeight - dock.offsetHeight - 8))}px`;
+        };
+        place(
+          Number.isFinite(saved?.x) ? saved.x : viewer.clientWidth - 340,
+          Number.isFinite(saved?.y) ? saved.y : 100,
+        );
+        const handle = dock.querySelector<HTMLElement>("#brief-dock-handle")!;
+        handle.addEventListener("pointerdown", (event) => {
+          if (
+            (event.target as HTMLElement).closest("button") ||
+            innerWidth < 701
+          )
+            return;
+          const originX = parseFloat(dock.style.left),
+            originY = parseFloat(dock.style.top);
+          const startX = event.clientX,
+            startY = event.clientY;
+          handle.setPointerCapture(event.pointerId);
+          const move = (next: PointerEvent) =>
+            place(
+              originX + next.clientX - startX,
+              originY + next.clientY - startY,
+            );
+          const finish = () => {
+            handle.removeEventListener("pointermove", move);
+            handle.removeEventListener("pointerup", finish);
+            localStorage.setItem(
+              "crew.briefDockPosition",
+              JSON.stringify({
+                x: parseFloat(dock.style.left),
+                y: parseFloat(dock.style.top),
+              }),
+            );
+          };
+          handle.addEventListener("pointermove", move);
+          handle.addEventListener("pointerup", finish);
+        });
+      }
+    }
   }
+  document
+    .querySelector<HTMLSelectElement>("#position-slot")
+    ?.addEventListener("change", (event) => {
+      officeSelectedSlot = (event.target as HTMLSelectElement).value;
+      const offset = officePositionDraft[officeSelectedSlot] || [0, 0, 0];
+      document.querySelector("#position-values")!.textContent =
+        `Offset: ${offset.map((v) => v.toFixed(2)).join(" / ")} m`;
+    });
+  document
+    .querySelector<HTMLSelectElement>("#city-item")
+    ?.addEventListener("change", (event) => {
+      selectCity((event.target as HTMLSelectElement).value);
+      void render(true);
+    });
+  document
+    .querySelector<HTMLSelectElement>("#city-model")
+    ?.addEventListener("change", (event) => {
+      const value = (event.target as HTMLSelectElement).value;
+      if (citySelected === "hq" || citySelected.startsWith("building:")) cityDraft.model = value;
+      else cityDraft.asset = value;
+      void render();
+    });
+  document.querySelector<HTMLSelectElement>("#hq-zone-item")?.addEventListener("change", (event) => {
+    hqSelectedZone = (event.target as HTMLSelectElement).value;
+    const offset = hqZoneDraft[hqSelectedZone] || [0, 0, 0];
+    document.querySelector("#hq-position-values")!.textContent = `Offset: ${offset.map((v) => v.toFixed(2)).join(" / ")} m`;
+  });
   focusViewer();
   if (retainedStage) return;
   if (view === "city" || view === "office" || view === "hq") {
@@ -477,12 +787,77 @@ async function render(preserveWorld = false) {
       const { mountWorld } = await import("./world");
       if (version !== renderVersion) return;
       const mounted = await mountWorld(document.querySelector("#world")!, {
-        data,
+        data:
+          view === "city" && cityEditing && citySelected === "hq"
+            ? { ...data, hq: { ...data.hq, position: cityDraft.position, model: cityDraft.model } }
+            : view === "hq" && hqEditing
+            ? { ...data, hq: { ...data.hq, zones: hqZoneDraft } }
+            : view === "city" && cityEditing && citySelected.startsWith("building:")
+            ? {
+                ...data,
+                buildings: data.buildings.map((b: Row) =>
+                  b.id === citySelected.slice(9)
+                    ? {
+                        ...b,
+                        model: cityDraft.model,
+                        x: cityDraft.position[0],
+                        y: cityDraft.position[1],
+                        z: cityDraft.position[2],
+                      }
+                    : b,
+                ),
+              }
+            : view === "city" &&
+                cityEditing &&
+                citySelected.startsWith("asset:")
+              ? {
+                  ...data,
+                  cityAssets: data.cityAssets.map((a: Row) =>
+                    a.id === citySelected.slice(6)
+                      ? {
+                          ...a,
+                          asset: cityDraft.asset,
+                          position: cityDraft.position,
+                        }
+                      : a,
+                  ),
+                }
+              : data,
         agent: view === "office" ? agent(selected) : null,
         headquarters: view === "hq",
         dusk,
         reduced,
+        positionDraft: officeEditing ? officePositionDraft : undefined,
         onSelect: (id: string) => {
+          if (cityEditing && view === "city") {
+            if (id === "hq") {
+              selectCity("hq");
+              void render(true);
+              return;
+            }
+            const building = data.buildings.find(
+              (b: Row) => b.agentId === id || `project:${b.id}` === id,
+            );
+            if (building) selectCity(`building:${building.id}`);
+            else if (id.startsWith("cityasset:"))
+              selectCity(`asset:${id.slice(10)}`);
+            else return;
+            void render(true);
+            return;
+          }
+          if (id.startsWith("furniture:")) {
+            if (officeEditing) {
+              officeSelectedSlot = id.slice(10);
+              const control =
+                document.querySelector<HTMLSelectElement>("#position-slot");
+              if (control) {
+                control.value = officeSelectedSlot;
+                control.dispatchEvent(new Event("change"));
+              }
+            }
+            return;
+          }
+          if (officeEditing && id.startsWith("agent:")) return;
           if (id.startsWith("agent:")) {
             selected = id.slice(6);
             view = "agent";
@@ -492,6 +867,13 @@ async function render(preserveWorld = false) {
           } else if (id.startsWith("zone:")) {
             view = "hq";
             tab = id.slice(5);
+            if (hqEditing) {
+              hqSelectedZone = tab;
+              void render(true);
+              return;
+            }
+            void render(true).then(() => document.querySelector<HTMLElement>("#hq-zone-content")?.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "start" }));
+            return;
           } else if (id === "hq") {
             view = "hq";
           } else {
@@ -507,7 +889,8 @@ async function render(preserveWorld = false) {
         world = mounted;
         worldKey = nextWorldKey;
       }
-    } catch {
+    } catch (error) {
+      console.error("World mount failed", error);
       showFallback();
     }
   }
@@ -686,11 +1069,188 @@ document.addEventListener("click", async (ev) => {
       await render();
       return;
     }
+    if (action === "toggle-brief-dock") {
+      briefDockOpen = !briefDockOpen;
+      localStorage.setItem("crew.briefDock", String(briefDockOpen));
+      await render(true);
+      return;
+    }
+    if (action === "toggle-office-edit") {
+      officeEditing = !officeEditing;
+      if (officeEditing) {
+        officePositionDraft = structuredClone(
+          agent(selected)?.officePositions || {},
+        );
+        officeSelectedSlot = "primary_desk";
+        await render(true);
+      } else await render();
+      return;
+    }
+    if (action === "toggle-city-edit") {
+      cityEditing = !cityEditing;
+      if (cityEditing) selectCity("hq");
+      await render(true);
+      return;
+    }
+    if (action === "toggle-hq-edit") {
+      hqEditing = !hqEditing;
+      if (hqEditing) hqZoneDraft = structuredClone(data.hq.zones || {});
+      await render(true);
+      return;
+    }
+    if (action === "hq-move" || action === "hq-reset") {
+      const offset = action === "hq-reset" ? [0, 0, 0] : [...(hqZoneDraft[hqSelectedZone] || [0, 0, 0])];
+      if (action === "hq-move") {
+        const axis = Number(target.dataset.axis);
+        const limits = [1, 1, 0.7];
+        const step = Number(document.querySelector<HTMLSelectElement>("#hq-step")?.value || 0.25);
+        offset[axis] = Math.max(axis === 1 ? -0.5 : -limits[axis], Math.min(limits[axis], Math.round((offset[axis] + Number(target.dataset.direction) * step) * 100) / 100));
+      }
+      hqZoneDraft[hqSelectedZone] = offset;
+      await render();
+      return;
+    }
+    if (action === "hq-save") {
+      await api("save_hq", { revision: data.hq.revision, zones: hqZoneDraft });
+      await refresh();
+      hqZoneDraft = structuredClone(data.hq.zones || {});
+      await render();
+      toast("HQ room saved.");
+      return;
+    }
+    if (action === "city-move" || action === "city-reset") {
+      if (!citySelected) return;
+      const row = citySelected === "hq" ? data.hq : citySelected.startsWith("building:")
+        ? data.buildings.find((b: Row) => b.id === citySelected.slice(9))
+        : data.cityAssets.find((a: Row) => a.id === citySelected.slice(6));
+      const position =
+        action === "city-reset"
+          ? citySelected === "hq"
+            ? [...row.position]
+            : citySelected.startsWith("building:")
+            ? [row.x, row.y || 0, row.z]
+            : [...row.position]
+          : [...cityDraft.position];
+      if (action === "city-move") {
+        const axis = Number(target.dataset.axis);
+        const step = Number(
+          document.querySelector<HTMLSelectElement>("#city-step")?.value || 0.5,
+        );
+        const min = axis === 1 ? 0 : -40;
+        const max =
+          axis === 1 ? (citySelected === "hq" || citySelected.startsWith("building:") ? 2 : 5) : citySelected === "hq" ? 30 : 40;
+        position[axis] = Math.max(
+          min,
+          Math.min(
+            max,
+            Math.round(
+              (position[axis] + Number(target.dataset.direction) * step) * 100,
+            ) / 100,
+          ),
+        );
+      }
+      cityDraft.position = position;
+      if (citySelected === "hq") await render();
+      else world?.moveCityItem(citySelected, position);
+      document.querySelector("#city-values")!.textContent =
+        `Position: ${position.map((n: number) => n.toFixed(2)).join(" / ")} m`;
+      return;
+    }
+    if (action === "city-save") {
+      const building = citySelected === "hq" || citySelected.startsWith("building:");
+      const row = citySelected === "hq" ? data.hq : building
+        ? data.buildings.find((b: Row) => b.id === citySelected.slice(9))
+        : data.cityAssets.find((a: Row) => a.id === citySelected.slice(6));
+      await api(citySelected === "hq" ? "save_hq" : building ? "save_city_building" : "save_city_asset", {
+        id: row.id,
+        revision: row.revision || 0,
+        position: cityDraft.position,
+        ...(building ? { model: cityDraft.model } : { asset: cityDraft.asset }),
+      });
+      await refresh();
+      selectCity(citySelected);
+      await render();
+      toast("City item saved.");
+      return;
+    }
+    if (action === "city-add") {
+      const asset =
+        document.querySelector<HTMLSelectElement>("#city-add-model")!.value;
+      const anchor = citySelected.startsWith("building:")
+        ? data.buildings.find((b: Row) => b.id === citySelected.slice(9))
+        : null;
+      await api("add_city_asset", {
+        asset,
+        position: [anchor ? anchor.x + 3.5 : 5, 0, anchor ? anchor.z + 3 : 10],
+      });
+      await refresh();
+      selectCity(`asset:${data.cityAssets[0].id}`);
+      await render();
+      return;
+    }
+    if (action === "city-remove") {
+      const row = data.cityAssets.find(
+        (a: Row) => a.id === citySelected.slice(6),
+      );
+      await api("remove_city_asset", { id: row.id, revision: row.revision });
+      await refresh();
+      selectCity("hq");
+      await render();
+      return;
+    }
+    if (action === "office-move" || action === "office-reset-item") {
+      const offset = [
+        ...(officePositionDraft[officeSelectedSlot] || [0, 0, 0]),
+      ];
+      if (action === "office-reset-item") offset.fill(0);
+      else {
+        const axis = Number(target.dataset.axis),
+          direction = Number(target.dataset.direction);
+        const step = Number(
+          document.querySelector<HTMLSelectElement>("#position-step")?.value ||
+            0.1,
+        );
+        const limit = axis === 1 ? 1.5 : 3;
+        offset[axis] = Math.max(
+          -limit,
+          Math.min(
+            limit,
+            Math.round((offset[axis] + direction * step) * 100) / 100,
+          ),
+        );
+      }
+      officePositionDraft[officeSelectedSlot] = offset;
+      world?.moveItem(officeSelectedSlot, offset);
+      document.querySelector("#position-values")!.textContent =
+        `Offset: ${offset.map((v) => v.toFixed(2)).join(" / ")} m`;
+      return;
+    }
+    if (action === "office-save-positions") {
+      await api("save_office_positions", {
+        agentId: selected,
+        revision: agent(selected)?.revision,
+        positions: officePositionDraft,
+      });
+      officeEditing = false;
+      await refresh();
+      await render();
+      toast("Office positions saved.");
+      return;
+    }
     if (action === "save-view") {
       openForm(
-        "Save operational view", "Save view",
-        input("name", "View name") + select("filter", "Filter", operationalFilters.slice(1) as [string, string][], activityFilter === "all" ? "needs_owner" : activityFilter),
-        async (f) => { await api("save_operational_view", Object.fromEntries(f)); },
+        "Save operational view",
+        "Save view",
+        input("name", "View name") +
+          select(
+            "filter",
+            "Filter",
+            operationalFilters.slice(1) as [string, string][],
+            activityFilter === "all" ? "needs_owner" : activityFilter,
+          ),
+        async (f) => {
+          await api("save_operational_view", Object.fromEntries(f));
+        },
       );
       return;
     }
@@ -701,25 +1261,65 @@ document.addEventListener("click", async (ev) => {
     if (action === "budget-new") {
       const targets: [string, string][] = [
         ["organization:bis", "BIS organization"],
-        ...data.agents.map((a: Row) => [`agent:${a.id}`, `Agent · ${a.name}`] as [string, string]),
-        ...data.work.map((w: Row) => [`mission:${w.id}`, `Mission · ${w.title}`] as [string, string]),
-        ...data.routines.map((r: Row) => [`routine:${r.id}`, `Routine · ${r.title}`] as [string, string]),
+        ...data.agents.map(
+          (a: Row) =>
+            [`agent:${a.id}`, `Agent · ${a.name}`] as [string, string],
+        ),
+        ...data.work.map(
+          (w: Row) =>
+            [`mission:${w.id}`, `Mission · ${w.title}`] as [string, string],
+        ),
+        ...data.routines.map(
+          (r: Row) =>
+            [`routine:${r.id}`, `Routine · ${r.title}`] as [string, string],
+        ),
       ];
-      openForm("New resource budget", "Create budget",
-        input("name", "Budget name") + select("target", "Applies to", targets) +
-        select("unit", "Unit", [["USD", "USD"], ["tokens", "Model tokens"], ["minutes", "Minutes"], ["API calls", "API calls"]]) +
-        select("period", "Period", [["monthly", "Monthly · Denver"], ["total", "Total"]]) +
-        '<label>Soft warning<input name="softLimit" type="number" min="0" step="any" required></label><label>Hard limit<input name="hardLimit" type="number" min="0.01" step="any" required></label>',
+      openForm(
+        "New resource budget",
+        "Create budget",
+        input("name", "Budget name") +
+          select("target", "Applies to", targets) +
+          select("unit", "Unit", [
+            ["USD", "USD"],
+            ["tokens", "Model tokens"],
+            ["minutes", "Minutes"],
+            ["API calls", "API calls"],
+          ]) +
+          select("period", "Period", [
+            ["monthly", "Monthly · Denver"],
+            ["total", "Total"],
+          ]) +
+          '<label>Soft warning<input name="softLimit" type="number" min="0" step="any" required></label><label>Hard limit<input name="hardLimit" type="number" min="0.01" step="any" required></label>',
         async (f) => {
           const [scope, scopeId] = String(f.get("target")).split(":");
-          await api("save_budget", { name: f.get("name"), scope, scopeId, unit: f.get("unit"), period: f.get("period"), softLimit: Number(f.get("softLimit")), hardLimit: Number(f.get("hardLimit")) });
-        });
+          await api("save_budget", {
+            name: f.get("name"),
+            scope,
+            scopeId,
+            unit: f.get("unit"),
+            period: f.get("period"),
+            softLimit: Number(f.get("softLimit")),
+            hardLimit: Number(f.get("hardLimit")),
+          });
+        },
+      );
       return;
     }
     if (action === "budget-usage") {
-      openForm("Record verified usage", "Record usage",
-        '<label>Amount<input name="amount" type="number" min="0.01" step="any" required></label>' + input("note", "Evidence or note"),
-        async (f) => { await api("record_budget_usage", { budgetId: id, amount: Number(f.get("amount")), note: f.get("note"), idempotency_key: crypto.randomUUID() }); });
+      openForm(
+        "Record verified usage",
+        "Record usage",
+        '<label>Amount<input name="amount" type="number" min="0.01" step="any" required></label>' +
+          input("note", "Evidence or note"),
+        async (f) => {
+          await api("record_budget_usage", {
+            budgetId: id,
+            amount: Number(f.get("amount")),
+            note: f.get("note"),
+            idempotency_key: crypto.randomUUID(),
+          });
+        },
+      );
       return;
     }
     if (action === "budget-delete") {
@@ -1103,32 +1703,103 @@ document.addEventListener("click", async (ev) => {
         "Register a building",
         "Register",
         input("name", "Name") +
-          select("kind", "Kind", [
-            ["project_site", "Project site"],
-            ["agent_hq", "Agent HQ"],
-          ]) +
+          select(
+            "kind",
+            "Kind",
+            id
+              ? [["project_site", "Project site"]]
+              : [
+                  ["project_site", "Project site"],
+                  ["agent_hq", "Agent HQ"],
+                ],
+          ) +
           input(
             "agentId",
             "New agent ID (used for agent HQ)",
             "text",
             "new-agent",
           ) +
-          select(
-            "style",
-            "Architecture",
-            ["command", "exchange", "tower", "lab", "studio", "workshop"].map(
-              (v) => [v, label(v)],
-            ),
-          ) +
+          select("style", "Architecture by work type", buildingStyles) +
+          select("model", "Building model", buildingModels) +
           select(
             "goalId",
             "Goal",
             data.goals.map((g: Row) => [g.id, g.name]),
           ),
         async (f) => {
-          await api("register_building", Object.fromEntries(f));
+          await api("register_building", {
+            ...Object.fromEntries(f),
+            ...(id ? { plotId: id } : {}),
+          });
         },
       );
+      return;
+    }
+    if (action === "building-edit") {
+      const b = data.buildings.find((row: Row) => row.id === id);
+      openForm(
+        "Edit campus building",
+        "Save building",
+        input("name", "Building name", "text", b.name) +
+          select(
+            "style",
+            "Architecture by work type",
+            buildingStyles,
+            b.style,
+          ) +
+          select(
+            "model",
+            "Building model",
+            buildingModels,
+            b.model || "campus",
+          ) +
+          select(
+            "goalId",
+            "Linked goal",
+            [["", "None"], ...data.goals.map((g: Row) => [g.id, g.name])],
+            b.goalId || "",
+          ),
+        async (f) => {
+          await api("update_building", {
+            id,
+            revision: b.revision || 0,
+            ...Object.fromEntries(f),
+          });
+        },
+      );
+      return;
+    }
+    if (action === "project-state") {
+      const b = data.buildings.find((row: Row) => row.id === id);
+      const state = target.dataset.state!;
+      openForm(
+        `Move to ${label(state)}`,
+        "Update project state",
+        `<p>The city building will change to the ${e(label(state))} appearance.</p>${input("note", "Owner decision or evidence")}`,
+        async (f) => {
+          await api("set_project_lifecycle", {
+            id,
+            revision: b.revision || 0,
+            lifecycle: state,
+            note: f.get("note"),
+          });
+        },
+      );
+      return;
+    }
+    if (action === "project-retire") {
+      const b = data.buildings.find((row: Row) => row.id === id);
+      if (
+        !confirm(
+          `Retire ${b.name}? Its plot will remain ready for the next project.`,
+        )
+      )
+        return;
+      await act("retire_project", {
+        id,
+        revision: b.revision || 0,
+        confirm: true,
+      });
       return;
     }
     if (action === "milestone-new") {
@@ -1267,37 +1938,67 @@ function openDesign(id: string) {
     }
   };
   const chosenPreset = () => {
-    const presetId = (f.elements.namedItem("preset") as HTMLSelectElement).value;
-    const preset = (data.officePresets || []).find((p: Row) => p.id === presetId);
+    const presetId = (f.elements.namedItem("preset") as HTMLSelectElement)
+      .value;
+    const preset = (data.officePresets || []).find(
+      (p: Row) => p.id === presetId,
+    );
     if (!preset) throw new Error("Choose a saved layout first");
     return preset;
   };
-  document.querySelector("#save-preset")!.addEventListener("click", () => void handle(async () => {
-    const name = (document.querySelector<HTMLInputElement>("#preset-name")!.value || "").trim();
-    await api("save_office_preset", { name, design: read() });
-    await refresh();
-    openDesign(id);
-    document.querySelector("#design-status")!.textContent = "Layout saved for every office.";
-  }));
-  document.querySelector("#load-preset")!.addEventListener("click", () => void handle(async () => {
-    draft = structuredClone(chosenPreset().design);
-    (f.elements.namedItem("theme") as HTMLSelectElement).value = draft.theme;
-    (f.elements.namedItem("palette") as HTMLSelectElement).value = draft.palette;
-    for (const slot of slots)
-      (f.elements.namedItem(slot) as HTMLSelectElement).value =
-        draft.placements.find((p: Row) => p.slot === slot)?.asset_id || "";
-    document.querySelector("#design-status")!.textContent = "Layout loaded into the editor. Preview or save it when ready.";
-  }));
-  document.querySelector("#apply-preset")!.addEventListener("click", () => void handle(async () => {
-    await act("apply_office_preset", { presetId: chosenPreset().id, agentId: id, revision: a.revision });
-    document.querySelector("dialog")?.close();
-  }));
-  document.querySelector("#delete-preset")!.addEventListener("click", () => void handle(async () => {
-    await api("delete_office_preset", { id: chosenPreset().id });
-    await refresh();
-    openDesign(id);
-    document.querySelector("#design-status")!.textContent = "Saved layout deleted.";
-  }));
+  document.querySelector("#save-preset")!.addEventListener(
+    "click",
+    () =>
+      void handle(async () => {
+        const name = (
+          document.querySelector<HTMLInputElement>("#preset-name")!.value || ""
+        ).trim();
+        await api("save_office_preset", { name, design: read() });
+        await refresh();
+        openDesign(id);
+        document.querySelector("#design-status")!.textContent =
+          "Layout saved for every office.";
+      }),
+  );
+  document.querySelector("#load-preset")!.addEventListener(
+    "click",
+    () =>
+      void handle(async () => {
+        draft = structuredClone(chosenPreset().design);
+        (f.elements.namedItem("theme") as HTMLSelectElement).value =
+          draft.theme;
+        (f.elements.namedItem("palette") as HTMLSelectElement).value =
+          draft.palette;
+        for (const slot of slots)
+          (f.elements.namedItem(slot) as HTMLSelectElement).value =
+            draft.placements.find((p: Row) => p.slot === slot)?.asset_id || "";
+        document.querySelector("#design-status")!.textContent =
+          "Layout loaded into the editor. Preview or save it when ready.";
+      }),
+  );
+  document.querySelector("#apply-preset")!.addEventListener(
+    "click",
+    () =>
+      void handle(async () => {
+        await act("apply_office_preset", {
+          presetId: chosenPreset().id,
+          agentId: id,
+          revision: a.revision,
+        });
+        document.querySelector("dialog")?.close();
+      }),
+  );
+  document.querySelector("#delete-preset")!.addEventListener(
+    "click",
+    () =>
+      void handle(async () => {
+        await api("delete_office_preset", { id: chosenPreset().id });
+        await refresh();
+        openDesign(id);
+        document.querySelector("#design-status")!.textContent =
+          "Saved layout deleted.";
+      }),
+  );
   f.querySelector('[name="theme"]')!.addEventListener("change", () => {
     const theme = (f.elements.namedItem("theme") as HTMLSelectElement).value;
     draft = data.themes[theme];

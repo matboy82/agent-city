@@ -194,7 +194,10 @@ test("pairing one use, ten-minute expiry, immediate revocation", () => {
 test("owner office presets duplicate a validated design between agents", () => {
   const f = fixture();
   const design = structuredClone(f.call("get_dashboard").themes.cozy_den);
-  const presetId = f.call("save_office_preset", { name: "Warm studio", design }).id;
+  const presetId = f.call("save_office_preset", {
+    name: "Warm studio",
+    design,
+  }).id;
   assert.equal(f.call("get_dashboard").officePresets[0].name, "Warm studio");
   const relay = f.s.get("agent", "relay");
   f.call("apply_office_preset", {
@@ -203,18 +206,32 @@ test("owner office presets duplicate a validated design between agents", () => {
     revision: relay.revision,
   });
   assert.deepEqual(f.s.get("agent", "relay").ownerDesign, design);
-  assert.throws(() => f.call("apply_office_preset", {
-    presetId, agentId: "relay", revision: relay.revision,
-  }), /changed/);
+  assert.throws(
+    () =>
+      f.call("apply_office_preset", {
+        presetId,
+        agentId: "relay",
+        revision: relay.revision,
+      }),
+    /changed/,
+  );
   f.call("delete_office_preset", { id: presetId });
   assert.equal(f.call("get_dashboard").officePresets.length, 0);
   f.s.close();
 });
 test("saved operational views are durable and validate filters", () => {
   const f = fixture();
-  const id = f.call("save_operational_view", { name: "Needs me", filter: "needs_owner" }).id;
-  assert.deepEqual(f.call("get_dashboard").savedViews.map((v) => v.name), ["Needs me"]);
-  assert.throws(() => f.call("save_operational_view", { name: "Other", filter: "invented" }));
+  const id = f.call("save_operational_view", {
+    name: "Needs me",
+    filter: "needs_owner",
+  }).id;
+  assert.deepEqual(
+    f.call("get_dashboard").savedViews.map((v) => v.name),
+    ["Needs me"],
+  );
+  assert.throws(() =>
+    f.call("save_operational_view", { name: "Other", filter: "invented" }),
+  );
   f.call("delete_operational_view", { id });
   assert.equal(f.call("get_dashboard").savedViews.length, 0);
   f.s.close();
@@ -223,18 +240,28 @@ test("verified budget usage is idempotent and a hard limit blocks dispatch", () 
   const f = fixture();
   const workId = f.create();
   const budgetId = f.call("save_budget", {
-    name: "BIS testing", scope: "organization", scopeId: "bis",
-    unit: "USD", period: "monthly", softLimit: 5, hardLimit: 10,
+    name: "BIS testing",
+    scope: "organization",
+    scopeId: "bis",
+    unit: "USD",
+    period: "monthly",
+    softLimit: 5,
+    hardLimit: 10,
   }).id;
   const usage = {
-    budgetId, amount: 10, note: "Verified provider invoice",
+    budgetId,
+    amount: 10,
+    note: "Verified provider invoice",
     idempotency_key: "budget-test-usage-1",
   };
   f.call("record_budget_usage", usage);
   assert.equal(f.call("record_budget_usage", usage).duplicate, true);
   assert.equal(f.call("get_dashboard").budgets[0].used, 10);
   assert.throws(() => f.dispatch(workId), /Budget hard limit reached/);
-  assert.throws(() => f.call("delete_budget", { id: budgetId }), /recorded usage/);
+  assert.throws(
+    () => f.call("delete_budget", { id: budgetId }),
+    /recorded usage/,
+  );
   f.s.close();
 });
 test("office strict validation, owner precedence and stale write protection", () => {
@@ -347,9 +374,15 @@ test("expired delivery and handoff release pending state without transferring ow
   const f = fixture();
   f.pair("relay");
   const w = f.create();
-  const m = f.call("send_agent_message", { agentId: "jeff", body: "Pending note" });
+  const m = f.call("send_agent_message", {
+    agentId: "jeff",
+    body: "Pending note",
+  });
   const h = f.jeff.act("request_handoff", {
-    workId: w, to: "relay", context: "Review context", idempotency_key: "expired-handoff",
+    workId: w,
+    to: "relay",
+    context: "Review context",
+    idempotency_key: "expired-handoff",
   });
   f.call("accept_handoff", { id: h.id, accept: true });
   for (const c of f.s.active("command")) {
@@ -453,5 +486,169 @@ test("project registration opens a project and only verified milestones advance 
     note: "Reviewed",
   });
   assert.equal(f.s.get("building", b).milestones[0].status, "closed");
+  f.s.close();
+});
+test("office item positions are bounded, revisioned, and persist independently of design", () => {
+  const f = fixture();
+  f.call("save_office_positions", {
+    agentId: "relay",
+    revision: 0,
+    positions: { task_chair: [0.25, 0, -0.5], desk_screen: [0, -0.1, 0.2] },
+  });
+  assert.deepEqual(
+    f.s.get("agent", "relay").officePositions.task_chair,
+    [0.25, 0, -0.5],
+  );
+  assert.throws(
+    () =>
+      f.call("save_office_positions", {
+        agentId: "relay",
+        revision: 0,
+        positions: {},
+      }),
+    /changed/,
+  );
+  assert.throws(
+    () =>
+      f.call("save_office_positions", {
+        agentId: "relay",
+        revision: 1,
+        positions: { task_chair: [99, 0, 0] },
+      }),
+    /too_big|less than or equal|3/,
+  );
+  f.s.close();
+});
+test("project lifecycle preserves a reusable plot and owner edits existing buildings", () => {
+  const f = fixture();
+  const id = f.call("register_building", {
+    name: "Signal Studio",
+    kind: "project_site",
+    style: "studio",
+    goalId: "monthly",
+  }).id;
+  const plot = f.s.get("building", id);
+  assert.equal(plot.lifecycle, "planning");
+  assert.deepEqual([plot.x, plot.z], [12, 0]);
+  f.call("update_building", {
+    id: "relay",
+    revision: 0,
+    name: "Relay Communications",
+    style: "studio",
+  });
+  assert.equal(f.s.get("building", "relay").style, "studio");
+  f.call("set_project_lifecycle", {
+    id,
+    revision: 0,
+    lifecycle: "building",
+    note: "Approved construction",
+  });
+  assert.throws(
+    () =>
+      f.call("set_project_lifecycle", {
+        id,
+        revision: 1,
+        lifecycle: "complete",
+        note: "Skip",
+      }),
+    /Cannot move/,
+  );
+  f.call("set_project_lifecycle", {
+    id,
+    revision: 1,
+    lifecycle: "running",
+    note: "Opened for work",
+  });
+  f.call("set_project_lifecycle", {
+    id,
+    revision: 2,
+    lifecycle: "complete",
+    note: "Delivered",
+  });
+  f.call("retire_project", { id, revision: 3, confirm: true });
+  assert.equal(f.s.get("building", id).kind, "reserved_plot");
+  assert.equal(f.s.get("building", id).projectHistory[0].name, "Signal Studio");
+  assert.throws(
+    () =>
+      f.call("register_building", {
+        name: "Wrong kind",
+        kind: "agent_hq",
+        agentId: "wrongkind",
+        style: "lab",
+        plotId: id,
+      }),
+    /Reserved plots accept projects only/,
+  );
+  const replacement = f.call("register_building", {
+    name: "Next Venture",
+    kind: "project_site",
+    style: "lab",
+    goalId: "monthly",
+  }).id;
+  assert.equal(replacement, id);
+  assert.equal(f.s.get("building", id).x, plot.x);
+  assert.equal(f.s.get("building", id).lifecycle, "planning");
+  assert.equal(f.s.get("building", id).projectHistory[0].name, "Signal Studio");
+  f.s.close();
+});
+test("city models and placements persist with revision and plot bounds", () => {
+  const f = fixture();
+  f.call("save_city_building", {
+    id: "relay",
+    revision: 0,
+    model: "glass_atrium",
+    position: [-8, 0.5, 7],
+  });
+  assert.equal(f.s.get("building", "relay").model, "glass_atrium");
+  assert.deepEqual(
+    [f.s.get("building", "relay").x, f.s.get("building", "relay").y],
+    [-8, 0.5],
+  );
+  assert.throws(
+    () =>
+      f.call("save_city_building", {
+        id: "relay",
+        revision: 0,
+        model: "campus",
+        position: [-8, 0, 7],
+      }),
+    /changed/,
+  );
+  assert.throws(
+    () =>
+      f.call("save_city_building", {
+        id: "relay",
+        revision: 1,
+        model: "campus",
+        position: [7, 0, 6],
+      }),
+    /plots must remain clear/,
+  );
+  f.call("add_city_asset", { asset: "satellite_dish", position: [-11, 0, 9] });
+  const asset = f.s.list("city_asset")[0];
+  assert.equal(asset.asset, "satellite_dish");
+  f.call("save_city_asset", {
+    id: asset.id,
+    revision: 0,
+    asset: "landing_pad",
+    position: [-12, 0, 10],
+  });
+  assert.deepEqual(f.s.get("city_asset", asset.id).position, [-12, 0, 10]);
+  f.call("remove_city_asset", { id: asset.id, revision: 1 });
+  assert.equal(f.s.get("city_asset", asset.id), null);
+  f.s.close();
+});
+test("HQ building and desk placements persist with revision and clearance checks", () => {
+  const f = fixture();
+  const hq = f.c.snapshot().hq;
+  assert.deepEqual(hq.position, [0, 0, 0]);
+  f.call("save_hq", { revision: 0, model: "skyscraper", position: [1, 0, 0] });
+  f.call("save_hq", { revision: 1, zones: { missions: [0.25, 0, -0.25] } });
+  assert.equal(f.c.snapshot().hq.model, "skyscraper");
+  assert.deepEqual(f.c.snapshot().hq.zones.missions, [0.25, 0, -0.25]);
+  assert.throws(() => f.call("save_hq", { revision: 1, model: "warehouse" }), /changed/);
+  assert.throws(() => f.call("save_hq", { revision: 2, zones: { missions: [8, 0, 0] } }), /too_big|less than or equal/);
+  const occupied = f.s.list("building")[0];
+  assert.throws(() => f.call("save_hq", { revision: 2, position: [occupied.x, 0, occupied.z] }), /clear/);
   f.s.close();
 });
