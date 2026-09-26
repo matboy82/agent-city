@@ -1,0 +1,19 @@
+name: Deploy to OVH
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 40.160.145.101
+          username: ubuntu
+          key: ${{ secrets.AGENT_CITY }}
+          script: |
+            sudo /usr/local/bin/crew-deploy.sh

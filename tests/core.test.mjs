@@ -351,6 +351,25 @@ test("private messages have explicit queued, delivered, acknowledged and replied
   assert.equal(f.s.get("message", m.id).status, "replied");
   f.s.close();
 });
+test("private conversation sessions resume only their own agent and serialize turns", () => {
+  const f = fixture();
+  const first = f.call("start_agent_conversation", { agentId: "jeff" });
+  const message = f.call("send_agent_message", { agentId: "jeff", conversationId: first.id, body: "Hello" });
+  assert.throws(() => f.call("send_agent_message", { agentId: "jeff", conversationId: first.id, body: "Too soon" }), /Wait for the current reply/);
+  assert.throws(() => f.call("send_agent_message", { agentId: "relay", conversationId: first.id, body: "Wrong agent" }), /another agent/);
+  const command = f.jeff.act("poll_commands")[0];
+  assert.equal(command.payload.runtimeSessionId, null);
+  f.jeff.act("reply_message", { id: message.id, body: "Hi", runtimeSessionId: "hermes-session-1" });
+  const next = f.call("send_agent_message", { agentId: "jeff", conversationId: first.id, body: "Continue" });
+  const queued = f.s.list("command").find((c) => c.payload?.messageId === next.id);
+  assert.equal(queued.payload.runtimeSessionId, "hermes-session-1");
+  const fresh = f.call("start_agent_conversation", { agentId: "jeff" });
+  const newMessage = f.call("send_agent_message", { agentId: "jeff", conversationId: fresh.id, body: "New topic" });
+  const freshCommand = f.s.list("command").find((c) => c.payload?.messageId === newMessage.id);
+  assert.equal(freshCommand.payload.runtimeSessionId, null);
+  assert.equal(f.call("get_dashboard").conversations.length, 2);
+  f.s.close();
+});
 test("handoff preserves accountability and changes ownership only on destination completion", () => {
   const f = fixture(),
     relay = f.pair("relay"),

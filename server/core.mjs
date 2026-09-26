@@ -158,6 +158,7 @@ export class Core {
       handoffs: this.s.list("handoff"),
       artifacts: this.s.list("artifact"),
       messages: this.s.list("message"),
+      conversations: this.s.list("conversation"),
       goals: this.s.list("goal"),
       queue: this.s.list("queue"),
       routines: this.s.list("routine"),
@@ -524,15 +525,25 @@ export class Core {
               this.enqueue(a.id, "agent.pause", null);
           break;
         }
+        case "start_agent_conversation": {
+          this.require("agent", b.agentId);
+          r = { id: id(), agentId: b.agentId, createdAt: now(), updatedAt: now(), runtimeSessionId: null };
+          this.s.put("conversation", r);
+          break;
+        }
         case "send_agent_message": {
           this.require("agent", b.agentId);
           if (b.workId) this.require("work", b.workId);
+          const conversation = b.conversationId ? this.require("conversation", b.conversationId) : null;
+          assert(!conversation || conversation.agentId === b.agentId, "Conversation belongs to another agent", 403);
+          assert(!conversation || !this.s.list("message").some((m) => m.conversationId === conversation.id && ["queued", "delivered", "acknowledged"].includes(m.status)), "Wait for the current reply before sending another message", 409);
           r = {
             id: id(),
             agentId: b.agentId,
             workId: b.workId || null,
             body: z.string().trim().min(1).max(4000).parse(b.body),
             scope: "private",
+            conversationId: conversation?.id || null,
             status: "queued",
             author: "matt",
             createdAt: now(),
@@ -541,7 +552,12 @@ export class Core {
           this.enqueue(b.agentId, "message.deliver", b.workId || null, {
             messageId: r.id,
             body: r.body,
+            runtimeSessionId: conversation?.runtimeSessionId || null,
           });
+          if (conversation) {
+            conversation.updatedAt = r.createdAt;
+            this.s.put("conversation", conversation);
+          }
           break;
         }
         case "promote_thread": {
@@ -1792,6 +1808,13 @@ export class Core {
       m.reply = z.string().min(1).max(4000).parse(b.body);
       m.status = "replied";
       this.s.put("message", m);
+      if (m.conversationId && b.runtimeSessionId) {
+        const conversation = this.require("conversation", m.conversationId);
+        assert(conversation.agentId === a.id, "Conversation belongs to another agent", 403);
+        conversation.runtimeSessionId = z.string().min(1).max(200).parse(b.runtimeSessionId);
+        conversation.updatedAt = now();
+        this.s.put("conversation", conversation);
+      }
       this.s.event(a.id, "message.replied", m.id);
       return { ok: true };
     }

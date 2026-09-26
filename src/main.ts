@@ -13,6 +13,7 @@ let token = "",
     matchMedia("(prefers-reduced-motion: reduce)").matches;
 const portraitUrls = new Map<string, string>();
 const previewDesigns = new Map<string, Row>();
+const chatSelection = new Map<string, string>();
 let navCollapsed = localStorage.getItem("crew.navCollapsed") === "true";
 let activityFilter = localStorage.getItem("crew.activityFilter") || "all";
 let briefDockOpen = localStorage.getItem("crew.briefDock") === "true";
@@ -440,6 +441,40 @@ function commandRows(rows: Row[]) {
 function messageCard(m: Row) {
   return `<article class="message"><div class="row"><strong>${e(m.author === "matt" ? "Matt" : m.author)}</strong>${badge(m.status)}</div><p>${e(m.body)}</p><small>${time(m.createdAt)} · ${e(m.scope)}</small>${m.reply ? `<blockquote><strong>${e(agent(m.agentId)?.name)}</strong><p>${e(m.reply)}</p></blockquote>` : ""}${m.scope === "private" ? button("Promote to mission thread", "promote", `data-id="${e(m.id)}"`, "text-button small") : ""}</article>`;
 }
+function conversationId(agentId: string) {
+  const saved = chatSelection.get(agentId);
+  const conversations = (data.conversations || []).filter((c: Row) => c.agentId === agentId);
+  return saved && (saved === "legacy" || conversations.some((c: Row) => c.id === saved))
+    ? saved
+    : conversations.sort((a: Row, b: Row) => b.createdAt.localeCompare(a.createdAt))[0]?.id || "legacy";
+}
+function chatMessages(agentId: string, conversation: string) {
+  const rows = data.messages.filter((m: Row) => m.agentId === agentId && m.scope === "private" &&
+    (conversation === "legacy" ? !m.conversationId : m.conversationId === conversation));
+  rows.sort((a: Row, b: Row) => a.createdAt.localeCompare(b.createdAt));
+  return rows.map((m: Row) => `<div class="chat-turn"><article class="chat-bubble mine"><strong>You</strong><p>${e(m.body)}</p><small>${time(m.createdAt)} · ${e(label(m.status))}</small></article>${m.reply ? `<article class="chat-bubble theirs"><strong>${e(agent(agentId)?.name || agentId)}</strong><p>${e(m.reply)}</p><small>Reply received</small></article>` : ""}</div>`).join("") || empty("Start a conversation", "Send a message to begin this session.");
+}
+function chatMarkup(agentId: string) {
+  const conversation = conversationId(agentId);
+  const conversations = (data.conversations || []).filter((c: Row) => c.agentId === agentId).sort((a: Row, b: Row) => b.createdAt.localeCompare(a.createdAt));
+  const hasLegacy = data.messages.some((m: Row) => m.agentId === agentId && m.scope === "private" && !m.conversationId);
+  const pending = data.messages.some((m: Row) => m.conversationId === conversation && ["queued", "delivered", "acknowledged"].includes(m.status));
+  const active = agent(agentId)?.connection === "Connected";
+  return `<div class="chat-header"><label>Session<select id="chat-session">${conversations.map((c: Row, index: number) => `<option value="${e(c.id)}" ${c.id === conversation ? "selected" : ""}>${index === 0 ? "Latest" : "Earlier"} · ${time(c.createdAt)}</option>`).join("")}${hasLegacy || !conversations.length ? `<option value="legacy" ${conversation === "legacy" ? "selected" : ""}>Earlier notes</option>` : ""}</select></label>${button("New session", "new-chat-session")}</div><div class="messages" id="chat-messages" role="log" aria-label="Conversation with ${e(agent(agentId)?.name)}">${chatMessages(agentId, conversation)}</div><div class="chat-presence" id="chat-presence" aria-live="polite">${pending ? `<span class="typing-dots"><i></i><i></i><i></i></span>${active ? "Working on your reply" : "Waiting for agent connection"}` : active ? "Connected · ready to chat" : "Offline · messages queue until connected"}</div>`;
+}
+function updateChatPane(scroll = false) {
+  if (view !== "office" && view !== "agent") return;
+  const pane = document.querySelector<HTMLElement>("#chat-pane");
+  if (!pane) return;
+  const log = pane.querySelector<HTMLElement>("#chat-messages");
+  const bottom = !log || log.scrollHeight - log.scrollTop - log.clientHeight < 64;
+  const previous = log?.scrollTop || 0;
+  pane.innerHTML = chatMarkup(selected);
+  const next = pane.querySelector<HTMLElement>("#chat-messages");
+  if (next) next.scrollTop = scroll || bottom ? next.scrollHeight : previous;
+  const pending = data.messages.some((m: Row) => m.conversationId === conversationId(selected) && ["queued", "delivered", "acknowledged"].includes(m.status));
+  document.querySelector<HTMLButtonElement>("#message-form button[type=submit]")!.disabled = pending;
+}
 function hqPositionEditor() {
   const offset = hqZoneDraft[hqSelectedZone] || [0, 0, 0];
   return `<div class="position-editor"><div class="row"><strong>HQ room editor</strong><small>Click a desk or choose a zone</small></div><label>Desk<select id="hq-zone-item">${zones.map(([id, name]) => `<option value="${id}" ${id === hqSelectedZone ? "selected" : ""}>${name}</option>`).join("")}</select></label><div class="position-values" id="hq-position-values">Offset: ${offset.map((v) => v.toFixed(2)).join(" / ")} m</div><label>Step<select id="hq-step"><option value="0.1">10 cm</option><option value="0.25" selected>25 cm</option><option value="0.5">50 cm</option></select></label><div class="position-arrows">${[["Left",0,-1],["Right",0,1],["Down",1,-1],["Up",1,1],["Back",2,-1],["Front",2,1]].map(([name,axis,direction]) => button(String(name), "hq-move", `data-axis="${axis}" data-direction="${direction}"`)).join("")}</div><div class="actions">${button("Reset desk", "hq-reset")}${button("Save room", "hq-save", "", "primary")}</div><small>Changes preview in the room. Save to keep them.</small></div>`;
@@ -513,17 +548,7 @@ function office(details = false) {
     ),
   );
   const building = data.buildings.find((b: Row) => b.agentId === a.id);
-  return `${button("← Back to city", "nav", 'data-view="city"', "text-button back")}${heading(a.role, details ? `${e(a.name)} - details` : `${e(a.name)}’s office`, a.currentTask || "No task reported. This space is ready when they are.", (details ? button("Enter office", "office", `data-id="${e(a.id)}"`) : "") + button("Design office", "design", `data-id="${e(a.id)}"`) + (building ? button("Edit building", "building-edit", `data-id="${e(building.id)}"`) : "") + button("Connection", "connect", `data-id="${e(a.id)}"`, "primary"))}<div class="office-layout ${details ? "detail-layout" : ""}">${details ? "" : `<section class="world-card office-world ${officeEditing ? "office-editing" : ""}"><div class="world-title"><div class="row">${avatar(a)}<div><h2>${e(a.name)}</h2><div class="office-name-actions">${button("? " + (officeEditing ? "Stop editing positions" : "Edit positions"), "toggle-office-edit", `aria-pressed="${officeEditing}"`)}</div>${badge(a.connection)}</div></div><span class="eyebrow">${e(label(a.effectiveDesign.theme))}</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Agent office; operational controls are below"></canvas><div id="world-loading" class="world-loading">Preparing office…</div></div>${officeEditing ? officePositionEditor(a) : ""}<div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D office" : "2D view", "flat")}<span>${e(a.designSource)} · revision ${a.revision}</span></div></section>`}<section class="panel conversation"><div class="section-title"><h2>Direct conversation</h2><span class="eyebrow">PRIVATE</span></div><p class="muted compact">A note is queued until the runtime confirms delivery.</p><div class="messages">${
-    data.messages
-      .filter((m: Row) => m.agentId === a.id && m.scope === "private")
-      .reverse()
-      .map(messageCard)
-      .join("") ||
-    empty(
-      "Open a conversation",
-      `Send ${e(a.name)} a note. Delivery state is tracked here.`,
-    )
-  }</div><form id="message-form"><label class="sr-only" for="message-body">Message ${e(a.name)}</label><textarea id="message-body" name="body" placeholder="What’s on your mind?" required maxlength="4000"></textarea><button class="primary" type="submit">Send note ${icon("arrow")}</button></form></section></div><div class="lower-grid"><section class="panel"><h2>Assigned work</h2>${work.map(workCard).join("") || '<p class="muted">No assigned missions.</p>'}</section><section class="panel"><h2>Runtime & boundaries</h2><dl><dt>Connection</dt><dd>${e(a.connection)}</dd><dt>Last heartbeat</dt><dd>${time(a.lastSeen)}</dd><dt>Runtime</dt><dd>${e(a.runtimeId || "Not paired")}</dd><dt>Sequence</dt><dd>${a.sequence >= 0 ? a.sequence : "—"}</dd><dt>Capabilities</dt><dd>${e(a.capabilities.join(", ") || "Not advertised")}</dd><dt>Data boundary</dt><dd>BIS only</dd></dl><h3>Evidence</h3>${artifacts(data.artifacts.filter((x: Row) => x.agentId === a.id))}</section></div>`;
+  return `${button("← Back to city", "nav", 'data-view="city"', "text-button back")}${heading(a.role, details ? `${e(a.name)} - details` : `${e(a.name)}’s office`, a.currentTask || "No task reported. This space is ready when they are.", (details ? button("Enter office", "office", `data-id="${e(a.id)}"`) : "") + button("Design office", "design", `data-id="${e(a.id)}"`) + (building ? button("Edit building", "building-edit", `data-id="${e(building.id)}"`) : "") + button("Connection", "connect", `data-id="${e(a.id)}"`, "primary"))}<div class="office-layout ${details ? "detail-layout" : ""}">${details ? "" : `<section class="world-card office-world ${officeEditing ? "office-editing" : ""}"><div class="world-title"><div class="row">${avatar(a)}<div><h2>${e(a.name)}</h2><div class="office-name-actions">${button("? " + (officeEditing ? "Stop editing positions" : "Edit positions"), "toggle-office-edit", `aria-pressed="${officeEditing}"`)}</div>${badge(a.connection)}</div></div><span class="eyebrow">${e(label(a.effectiveDesign.theme))}</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Agent office; operational controls are below"></canvas><div id="world-loading" class="world-loading">Preparing office…</div></div>${officeEditing ? officePositionEditor(a) : ""}<div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D office" : "2D view", "flat")}<span>${e(a.designSource)} · revision ${a.revision}</span></div></section>`}<section class="panel conversation"><div class="section-title"><h2>Direct conversation</h2><span class="eyebrow">PRIVATE</span></div><div id="chat-pane">${chatMarkup(a.id)}</div><form id="message-form"><label class="sr-only" for="message-body">Message ${e(a.name)}</label><textarea id="message-body" name="body" placeholder="Message ${e(a.name)}…" required maxlength="4000"></textarea><div class="chat-compose-actions"><small>Enter to send · Shift+Enter for a new line</small><button class="primary" type="submit">Send message ${icon("arrow")}</button></div></form></section></div><div class="lower-grid"><section class="panel"><h2>Assigned work</h2>${work.map(workCard).join("") || '<p class="muted">No assigned missions.</p>'}</section><section class="panel"><h2>Runtime & boundaries</h2><dl><dt>Connection</dt><dd>${e(a.connection)}</dd><dt>Last heartbeat</dt><dd>${time(a.lastSeen)}</dd><dt>Runtime</dt><dd>${e(a.runtimeId || "Not paired")}</dd><dt>Sequence</dt><dd>${a.sequence >= 0 ? a.sequence : "—"}</dd><dt>Capabilities</dt><dd>${e(a.capabilities.join(", ") || "Not advertised")}</dd><dt>Data boundary</dt><dd>BIS only</dd></dl><h3>Evidence</h3>${artifacts(data.artifacts.filter((x: Row) => x.agentId === a.id))}</section></div>`;
 }
 function crew() {
   return `${heading("PEOPLE & RUNTIMES", "Meet your crew.", "Distinct identities. Shared direction. Honest connection states.", button("Register building", "building-new"))}<div class="crew-grid">${data.agents
@@ -782,6 +807,7 @@ async function render(preserveWorld = false) {
     const offset = hqZoneDraft[hqSelectedZone] || [0, 0, 0];
     document.querySelector("#hq-position-values")!.textContent = `Offset: ${offset.map((v) => v.toFixed(2)).join(" / ")} m`;
   });
+  if (view === "office" || view === "agent") updateChatPane(true);
   focusViewer();
   if (retainedStage) return;
   if (view === "city" || view === "office" || view === "hq") {
@@ -1042,6 +1068,14 @@ document.addEventListener("click", async (ev) => {
   ev.preventDefault();
   const { action, id, operation } = target.dataset;
   try {
+    if (action === "new-chat-session") {
+      const result = await api("start_agent_conversation", { agentId: selected });
+      chatSelection.set(selected, result.id);
+      await refresh();
+      updateChatPane(true);
+      document.querySelector<HTMLTextAreaElement>("#message-body")?.focus();
+      return;
+    }
     if (action === "close") {
       document.querySelector("dialog")?.close();
       return;
@@ -2089,10 +2123,32 @@ document.addEventListener("submit", (ev) => {
   if ((ev.target as HTMLElement).id !== "message-form") return;
   ev.preventDefault();
   const f = ev.target as HTMLFormElement;
-  void act("send_agent_message", {
-    agentId: selected,
-    body: new FormData(f).get("body"),
-  }).catch((err) => toast(err.message, true));
+  const body = String(new FormData(f).get("body") || "").trim();
+  if (!body) return;
+  const send = f.querySelector<HTMLButtonElement>("button[type=submit]")!;
+  send.disabled = true;
+  void (async () => {
+    try {
+      let conversation = conversationId(selected);
+      if (conversation === "legacy") {
+        const created = await api("start_agent_conversation", { agentId: selected });
+        conversation = created.id;
+        chatSelection.set(selected, conversation);
+      }
+      await api("send_agent_message", { agentId: selected, conversationId: conversation, body });
+      f.reset();
+      await refresh();
+      updateChatPane(true);
+    } catch (err) {
+      send.disabled = false;
+      toast((err as Error).message, true);
+    }
+  })();
+});
+document.addEventListener("change", (ev) => {
+  if ((ev.target as HTMLElement).id !== "chat-session") return;
+  chatSelection.set(selected, (ev.target as HTMLSelectElement).value);
+  updateChatPane(true);
 });
 let searchTimeout: ReturnType<typeof setTimeout>;
 document.addEventListener("input", (ev) => {
@@ -2108,6 +2164,11 @@ document.addEventListener("input", (ev) => {
   }
 });
 document.addEventListener("keydown", (ev) => {
+  if (ev.target instanceof HTMLTextAreaElement && ev.target.id === "message-body" && ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
+    ev.preventDefault();
+    ev.target.form?.requestSubmit();
+    return;
+  }
   if (
     ev.key === "/" &&
     !["INPUT", "TEXTAREA", "SELECT"].includes(
@@ -2143,7 +2204,12 @@ async function boot() {
           if (document.hidden || document.querySelector("dialog")) return;
           try {
             const old = presentationKey(data);
+            const previousScene = sceneKey();
             await refresh();
+            if (view === "office" && sceneKey() === previousScene) {
+              updateChatPane();
+              return;
+            }
             if (
               presentationKey(data) !== old &&
               !["INPUT", "TEXTAREA", "SELECT"].includes(

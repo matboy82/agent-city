@@ -63,6 +63,9 @@ export async function handle(command, { adapter, shouldStop }) {
   const args = [
     "--profile",
     profile,
+    ...(command.verb === "message.deliver" && command.payload?.runtimeSessionId
+      ? ["--resume", command.payload.runtimeSessionId]
+      : []),
     "chat",
     "--query-file",
     "-",
@@ -167,6 +170,7 @@ export async function handle(command, { adapter, shouldStop }) {
       await adapter.call("reply_message", {
         id: command.payload.messageId,
         body: terminal.text.slice(0, 4000) || "Hermes returned no text",
+        runtimeSessionId: terminal.session_id,
       });
       return { summary: "Hermes replied to the private message" };
     }
