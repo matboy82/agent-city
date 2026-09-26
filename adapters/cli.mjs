@@ -68,6 +68,9 @@ export class Adapter {
       current_run_id: runId,
       capabilities,
       ...(officeDesign ? { office_design: officeDesign } : {}),
+      ...(process.env.CREW_ACTIVITY
+        ? { current_activity: process.env.CREW_ACTIVITY }
+        : {}),
     });
   }
   async ack(command, status, runId, result) {
@@ -211,7 +214,7 @@ if (
     const inflight = new Map();
     while (true) {
       try {
-        await adapter.heartbeat({ status: inflight.size ? "active" : "idle" });
+        await adapter.heartbeat({ status: process.env.CREW_STATUS || (inflight.size ? "active" : "idle") });
         const commands = await adapter.call("poll_commands");
         for (const command of commands) {
           if (inflight.has(command.id)) continue;
