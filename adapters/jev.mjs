@@ -40,8 +40,8 @@ export async function handle(command, { adapter }) {
     throw new Error("Unsupported Jev command: " + verb);
   }
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY not set");
+  const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY;
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY / OPEN_ROUTER_API_KEY not set");
 
   const payload = command.payload || {};
   const state = {
