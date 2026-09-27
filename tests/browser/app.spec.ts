@@ -29,6 +29,10 @@ test("city editor remains usable when a dashboard omits city assets", async ({
     await route.fulfill({ response, json: snapshot });
   });
   await login(page);
+  await expect(page.locator("#city-building-nav")).toBeVisible();
+  const tools = await page.locator(".city-layout .world-tools").boundingBox();
+  const picker = await page.locator(".city-layout .building-strip").boundingBox();
+  expect(tools!.y + tools!.height).toBeLessThanOrEqual(picker!.y);
   await page.getByRole("button", { name: "Edit city" }).click();
   await expect(page.locator("#city-item")).toBeVisible();
   await page.getByRole("button", { name: "Stop editing city" }).click();
@@ -47,7 +51,15 @@ test("city editor saves a building model and places an asset", async ({
   );
   await login(page);
   await page.getByRole("button", { name: "Edit city" }).click();
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", { timeout: 30000 });
+  await page.locator("#world").evaluate((canvas) => canvas.setAttribute("data-camera-check", "retained"));
   await page.locator("#city-item").selectOption("building:relay");
+  await expect(page.locator("#world")).toHaveAttribute("data-camera-check", "retained");
+  const savedPosition = await page.locator("#city-values").textContent();
+  await page.getByRole("button", { name: "Right", exact: true }).click();
+  await page.locator("#city-item").selectOption("hq");
+  await page.locator("#city-item").selectOption("building:relay");
+  await expect(page.locator("#city-values")).toHaveText(savedPosition!);
   await page.locator("#city-model").selectOption("glass_atrium");
   await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", {
     timeout: 30000,
@@ -81,7 +93,7 @@ test("project site registration hides agent identity and city editor previews be
   await page.getByRole("button", { name: "Register", exact: true }).click();
   await expect(page.locator("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "The city", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Browser project site" })).toBeVisible();
+  await expect(page.locator('#city-building-nav option', { hasText: "Browser project site" })).toHaveCount(1);
   await page.getByRole("button", { name: "Edit city" }).click();
   const card = await page.locator('.city-layout > .world-card').boundingBox();
   const editor = await page.locator('.city-layout > .city-editor').boundingBox();
@@ -171,21 +183,30 @@ test("a Hermes profile portrait and animated avatar load from bundled assets", a
     if (route.request().method() !== "POST" || JSON.parse(route.request().postData() || "{}").action !== "get_dashboard") return route.continue();
     const response = await route.fetch();
     const snapshot = await response.json();
-    for (const name of ["ted", "arthur", "opal", "proctor", "triton"])
-      snapshot.agents.push({ ...snapshot.agents[0], id: name, name: name[0].toUpperCase() + name.slice(1), avatar: null, connection: "Connected", status: "active", activity: "typing", currentTask: "Writing an architecture review" });
+    for (const name of ["ted", "chad", "nerby", "zack", "jefferson", "arthur", "opal", "proctor", "triton"]) {
+      const mocked = { ...snapshot.agents[0], id: name, name: name[0].toUpperCase() + name.slice(1), avatar: null, connection: "Connected", status: "active", activity: "typing", currentTask: "Writing an architecture review" };
+      const existing = snapshot.agents.find((agent: any) => agent.id === name);
+      if (existing) Object.assign(existing, mocked);
+      else snapshot.agents.push(mocked);
+    }
     await route.fulfill({ response, json: snapshot });
+  });
+  const characterRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/assets/characters/")) characterRequests.push(request.url());
   });
   await login(page);
   await page.getByRole("button", { name: "Your crew", exact: true }).click();
   await page.locator(".agent-card").filter({ has: page.getByRole("heading", { name: "Ted" }) }).getByRole("button", { name: "Enter office" }).click();
   await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", { timeout: 30000 });
-  await expect(page.locator('img[src="/assets/portraits/ted.jpg"]').first()).toBeVisible();
+  await expect(page.locator('img[src^="/assets/portraits/ted.jpg?v="]').first()).toBeVisible();
   const diagnostics = JSON.parse((await page.locator("#world").getAttribute("data-diagnostics")) || "{}");
   expect(diagnostics.failures).toEqual([]);
   expect(diagnostics.articulatedJoints).toBeGreaterThanOrEqual(5);
+  expect(characterRequests.some((url) => /profile-ted\.glb\?v=/.test(url))).toBe(true);
   await expect(page.locator("#world")).toHaveAttribute("data-activity", "typing");
   await page.screenshot({ path: "test-results/ted-profile-office.png", fullPage: true });
-  for (const name of ["Arthur", "Opal", "Proctor", "Triton"]) {
+  for (const name of ["Chad", "Nerby", "Zack", "Jefferson", "Arthur", "Opal", "Proctor", "Triton"]) {
     await page.getByRole("button", { name: "Back to city" }).click();
     await page.getByRole("button", { name: "Your crew", exact: true }).click();
     await page.locator(".agent-card").filter({ has: page.getByRole("heading", { name }) }).getByRole("button", { name: "Enter office" }).click();
@@ -193,7 +214,8 @@ test("a Hermes profile portrait and animated avatar load from bundled assets", a
     const state = JSON.parse((await page.locator("#world").getAttribute("data-diagnostics")) || "{}");
     expect(state.failures, `${name}'s modeled asset should load`).toEqual([]);
     expect(state.articulatedJoints, `${name} should have animated pivots`).toBeGreaterThanOrEqual(5);
-    if (["Opal", "Triton"].includes(name)) await page.screenshot({ path: `test-results/${name.toLowerCase()}-profile-office.png`, fullPage: true });
+    expect(characterRequests.some((url) => url.includes(`/profile-${name.toLowerCase()}.glb?v=`)), `${name}'s latest model should be fetched`).toBe(true);
+    if (["Jefferson", "Opal", "Triton"].includes(name)) await page.screenshot({ path: `test-results/${name.toLowerCase()}-profile-office.png`, fullPage: true });
   }
 });
 test("owner controls, office, durable note, settings and responsive navigation", async ({
@@ -414,10 +436,7 @@ test("2D fallback preserves control when WebGL cannot initialize", async ({
       name: "3D unavailable. Your controls are ready.",
     }),
   ).toBeVisible();
-  await page
-    .getByRole("button", { name: "BIS HQ", exact: false })
-    .first()
-    .click();
+  await page.locator("#city-building-nav").selectOption("hq");
   await expect(
     page.getByRole("heading", { name: "Move the team forward." }),
   ).toBeVisible();
@@ -470,7 +489,7 @@ test("expanded viewer, focus pages and persistent collapsed navigation", async (
     visibleModels,
     "expanded viewer should contain visible 3D models",
   ).toBeGreaterThan(4);
-  await page.getByRole("button", { name: "The War Room", exact: true }).click();
+  await page.locator("#city-building-nav").selectOption({ label: "The War Room" });
   await expect(
     page.getByRole("heading", { name: "Jeff’s office", hidden: true }),
   ).toBeAttached();
@@ -498,6 +517,7 @@ test("expanded viewer, focus pages and persistent collapsed navigation", async (
   await expect(
     page.getByRole("heading", { name: "Morning Brief", exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole("region", { name: "Recent activity" })).toHaveCSS("overflow-y", "auto");
   await page
     .getByRole("button", { name: "Today's agenda", exact: true })
     .click();

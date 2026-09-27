@@ -2140,3 +2140,47 @@ label[hidden] {
     position: absolute;
   }
 }
+.city-layout .world-tools {
+  position: static;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  padding: 10px 14px;
+  flex-shrink: 0;
+}
+.city-layout .building-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px 14px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+.city-layout .building-strip label {
+  margin: 0;
+  flex: none;
+  white-space: nowrap;
+}
+.city-layout .building-strip select {
+  margin: 0;
+  min-width: 0;
+  max-width: 460px;
+  flex: 1;
+}
+.away-list {
+  max-height: min(46vh, 380px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 10px;
+}
+@media (max-width: 700px) {
+  .city-layout .building-strip {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .city-layout .building-strip select {
+    max-width: none;
+    width: 100%;
+  }
+}

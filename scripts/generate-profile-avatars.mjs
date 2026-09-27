@@ -126,6 +126,39 @@ function creature(s) {
   }
   return root;
 }
+function bull() {
+  const root = new THREE.Group();
+  const hide = material(0x8b4b2c), darkHide = material(0x61351f), muzzle = material(0xc88961);
+  const vest = material(0x243e50), shirt = material(0xe9e2d5), horn = material(0xf2e5c8);
+  const gold = material(0xd9af54, .4, .3), black = material(0x242b2e);
+  rig(root, { outfit: 0x243e50, skin: 0x8b4b2c });
+  sphere(root, hide, [0, 1.63, 0], .68, "bull-shoulders", [1.24, 1.12, .83]);
+  sphere(root, vest, [0, 1.55, .28], .54, "tailored-vest", [1.07, 1.14, .67]);
+  cube(root, shirt, [0, 1.78, .61], [.18, .49, .045], "shirt-placket");
+  piece(root, new THREE.ConeGeometry(.11, .40, 4), gold, [0, 1.78, .66], "bull-market-tie").rotation.z = Math.PI;
+  for (const sign of [-1, 1]) {
+    cube(root, darkHide, [sign * .20, .38, -.04], [.31, .18, .42], "cloven-hoof");
+    path(root, gold, [[sign * .28, 1.32, .63], [sign * .18, 1.53, .66], [sign * .07, 1.69, .67]], .019, "rising-market-stitch");
+  }
+  path(root, darkHide, [[0, 1.38, -.43], [.22, 1.09, -.76], [.35, .73, -.86]], .055, "bull-tail");
+  sphere(root, darkHide, [.36, .68, -.86], .09, "tail-tuft", [.6, 1.5, .65]);
+  const head = pivot(root, "head", [0, 2.55, 0]);
+  sphere(head, hide, [0, 0, -.03], .52, "bull-head", [1.18, 1.03, .92]);
+  sphere(head, darkHide, [0, .34, .16], .34, "forelock", [1.12, .45, .78]);
+  for (const sign of [-1, 1]) {
+    sphere(head, hide, [sign * .53, .13, -.02], .21, "bull-ear", [1.17, .52, .72]);
+    sphere(head, muzzle, [sign * .60, .13, .08], .12, "inner-ear", [1.06, .39, .55]);
+    path(head, horn, [[sign * .35, .34, -.03], [sign * .53, .52, -.03], [sign * .67, .70, .02], [sign * .71, .87, .04]], .105, "curved-ivory-horn");
+    piece(head, new THREE.ConeGeometry(.08, .29, 12), horn, [sign * .71, .83, .04], "horn-tip").rotation.z = -sign * .2;
+    sphere(head, shirt, [sign * .21, .03, .43], .108, "eye-white", [1.15, .86, .58]);
+    sphere(head, black, [sign * .21, .02, .50], .055, "bull-eye", [1, 1.12, .62]);
+    path(head, darkHide, [[sign * .12, .20, .43], [sign * .22, .23, .45], [sign * .32, .18, .39]], .025, "expressive-brow");
+  }
+  sphere(head, muzzle, [0, -.25, .40], .34, "broad-muzzle", [1.34, .69, .78]);
+  for (const sign of [-1, 1]) sphere(head, darkHide, [sign * .18, -.27, .65], .046, "nostril", [1, .7, .35]);
+  path(head, darkHide, [[-.15, -.42, .56], [0, -.46, .60], [.15, -.42, .56]], .018, "confident-smile");
+  return root;
+}
 function machine(s) {
   const root = new THREE.Group();
   const shell = material(s.shell, .22, .45), trim = material(s.trim, .5, .35), lit = luminous(s.accent);
@@ -196,7 +229,7 @@ const specs = [
   { id: "calvin", type: "creature", kind: "cat", coat: 0xf6f4ee, light: 0xffffff },
   { id: "chad", type: "human", skin: 0xe7ad87, hair: 0xe2b944, outfit: 0x3159a3, accent: 0xcf332e },
   { id: "irene", type: "creature", kind: "duck", coat: 0xf8dd49, light: 0xffe96b },
-  { id: "jefferson", type: "blob", body: 0x38d5a7, shade: 0x148d77 },
+  { id: "jefferson", type: "bull" },
   { id: "jonathan", type: "spirit", cloak: 0x2b2c32, edge: 0x464a54 },
   { id: "mark", type: "human", skin: 0xe4b08a, hair: 0xcac8bb, outfit: 0x3d332d, accent: 0xd2bb86 },
   { id: "nerby", type: "machine", shell: 0xe7e2d2, trim: 0x738081, screen: 0x293a3c, accent: 0xf49b3b },
@@ -213,7 +246,7 @@ const specs = [
 await mkdir(output, { recursive: true });
 const exporter = new GLTFExporter();
 for (const spec of specs) {
-  const root = spec.type === "human" ? human(spec) : spec.type === "creature" ? creature(spec) : spec.type === "machine" ? machine(spec) : spec.type === "spirit" ? spirit(spec) : spec.type === "octopus" ? octopus() : blob(spec);
+  const root = spec.type === "human" ? human(spec) : spec.type === "creature" ? creature(spec) : spec.type === "bull" ? bull() : spec.type === "machine" ? machine(spec) : spec.type === "spirit" ? spirit(spec) : spec.type === "octopus" ? octopus() : blob(spec);
   root.name = spec.id;
   root.userData.characterId = spec.id;
   const glb = await exporter.parseAsync(root, { binary: true, onlyVisible: true });

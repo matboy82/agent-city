@@ -19,6 +19,7 @@ import "@babylonjs/loaders/glTF/2.0/Extensions/KHR_materials_unlit";
 import "@babylonjs/loaders/glTF/2.0/Extensions/KHR_materials_emissive_strength";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import { resolveActivity } from "./activity";
+declare const __CHARACTER_ASSET_VERSION__: string;
 type Row = Record<string, any>;
 const files: Record<string, string> = {
   "kenney.desk": "desk",
@@ -72,10 +73,9 @@ function modelBytes(path: string) {
   }
   return p;
 }
-let cityCamera: number[] | null = null;
-let cityCameraExtent = 12;
+let cityCamera: [number, number, number, number, number, number] | null = null;
 const profileAvatars = new Set(["angela", "arthur", "calvin", "chad", "irene", "jeff", "jefferson", "jonathan", "mark", "nerby", "opal", "proctor", "rachel", "sally", "steve", "ted", "triton", "video", "zack"]);
-const characterPath = (id: string) => `/assets/characters/${["jeff", "relay", "jev"].includes(id) ? id : profileAvatars.has(id) ? `profile-${id}` : "neutral"}.glb`;
+const characterPath = (id: string) => `/assets/characters/${["jeff", "relay", "jev"].includes(id) ? id : profileAvatars.has(id) ? `profile-${id}` : "neutral"}.glb?v=${__CHARACTER_ASSET_VERSION__}`;
 export async function mountWorld(
   canvas: HTMLCanvasElement,
   opts: {
@@ -945,9 +945,10 @@ export async function mountWorld(
     cityCenterZ = campusCenter;
     const extent = Math.max(southEdge - 12, -12 - northEdge);
     initialRadius = Math.max(initialRadius, 30 + extent * 1.5);
-    camera.target = new Vector3(0, 0, campusCenter);
-    if (!cityCamera || extent > cityCameraExtent) camera.radius = initialRadius;
-    cityCameraExtent = Math.max(cityCameraExtent, extent);
+    camera.target = cityCamera
+      ? new Vector3(cityCamera[3], cityCamera[4], cityCamera[5])
+      : new Vector3(0, 0, campusCenter);
+    if (!cityCamera) camera.radius = initialRadius;
     box(
       "campus plinth",
       0,
@@ -1813,7 +1814,7 @@ export async function mountWorld(
       if (disposed) return;
       disposed = true;
       if (!agent && !opts.headquarters)
-        cityCamera = [camera.alpha, camera.beta, camera.radius];
+        cityCamera = [camera.alpha, camera.beta, camera.radius, camera.target.x, camera.target.y, camera.target.z];
       resize.disconnect();
       canvas.removeEventListener("webglcontextlost", lost);
       engine.stopRenderLoop();

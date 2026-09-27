@@ -81,9 +81,10 @@ const badge = (v: string) =>
   `<span class="badge ${["active", "Connected", "done", "completed", "approved"].includes(v) ? "good" : ["failed", "blocked", "rejected", "expired"].includes(v) ? "bad" : ["waiting_approval", "waiting_on_matt", "queued", "Stale"].includes(v) ? "warn" : ""}"><i></i>${e(label(v))}</span>`;
 const button = (text: string, action: string, extra = "", cls = "") =>
   `<button class="${cls}" data-action="${action}" ${extra}>${text}</button>`;
+declare const __CHARACTER_ASSET_VERSION__: string;
 const avatar = (a: Row, size = "") =>
   (a.avatar && !a.avatar.startsWith("/api")) || profilePortraits.has(a.id)
-    ? `<img class="avatar ${size}" loading="lazy" src="${e(a.avatar && !a.avatar.startsWith("/assets/") ? a.avatar : profilePortraits.has(a.id) ? `/assets/portraits/${a.id}.jpg` : a.avatar)}" alt="${e(a.name)}'s portrait">`
+    ? `<img class="avatar ${size}" loading="lazy" src="${e(a.avatar && !a.avatar.startsWith("/assets/") ? a.avatar : profilePortraits.has(a.id) ? `/assets/portraits/${a.id}.jpg?v=${__CHARACTER_ASSET_VERSION__}` : a.avatar)}" alt="${e(a.name)}'s portrait">`
     : `<span class="avatar neutral ${size}" aria-label="${e(a.name)} — portrait not supplied">${e(a.name?.slice(0, 2).toUpperCase())}</span>`;
 async function api(action: string, input: Row = {}) {
   const r = await fetch("/api/actions", {
@@ -168,7 +169,7 @@ function sceneKey() {
       data.buildings,
       data.cityAssets,
       data.hq,
-      cityEditing ? cityDraft.model : "",
+      cityPreviewKey(),
       data.agents.map((a: Row) => [a.id, a.connection, a.operationalState]),
     ]);
   if (view === "hq")
@@ -289,7 +290,7 @@ function activityControls() {
   return `<div class="actions operational-filters">${operationalFilters.map(([id, title]) => button(title, "activity-filter", `data-filter="${id}" aria-pressed="${activityFilter === id}"`, activityFilter === id ? "primary" : "")).join("")}${button("Save this view", "save-view")}</div><div class="actions saved-views">${(data.savedViews || []).map((v: Row) => `${button(e(v.name), "activity-filter", `data-filter="${e(v.filter)}"`)}${button("×", "delete-view", `data-id="${e(v.id)}" aria-label="Delete saved view ${e(v.name)}"`)}`).join("")}</div>`;
 }
 function city() {
-  return `${heading("YOUR OPERATING WORLD", "Good to see you, Matt.", "A place for your crew. A clear view of what comes next.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}<div class="city-layout ${cityEditing ? "editing-city" : ""}"><section class="world-card"><div class="world-title"><div><span class="eyebrow">BIS CAMPUS</span><h2>A world built around your work.</h2><div class="office-name-actions">${button(cityEditing ? "Stop editing city" : "Edit city", "toggle-city-edit", `aria-pressed="${cityEditing}"`)}</div></div><span class="live-label"><i></i> LIVE STATE</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Interactive BIS city. Equivalent building buttons below."></canvas><div class="world-loading" id="world-loading">Preparing your campus…</div></div><div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D campus" : "2D view", "flat")}<span>Drag to orbit · Scroll to explore</span></div><div class="building-strip">${button("BIS HQ " + icon("arrow"), "nav", 'data-view="hq"', "hq-building")}${data.buildings.map((b: Row) => button(e(b.name), "building", `data-id="${e(b.id)}"`)).join("")}</div></section>${cityEditing ? cityEditor() : ""}</div>`;
+  return `${heading("YOUR OPERATING WORLD", "Good to see you, Matt.", "A place for your crew. A clear view of what comes next.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}<div class="city-layout ${cityEditing ? "editing-city" : ""}"><section class="world-card"><div class="world-title"><div><span class="eyebrow">BIS CAMPUS</span><h2>A world built around your work.</h2><div class="office-name-actions">${button(cityEditing ? "Stop editing city" : "Edit city", "toggle-city-edit", `aria-pressed="${cityEditing}"`)}</div></div><span class="live-label"><i></i> LIVE STATE</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Interactive BIS city. Choose a building from the dropdown below."></canvas><div class="world-loading" id="world-loading">Preparing your campus…</div></div><div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D campus" : "2D view", "flat")}<span>Drag to orbit · Scroll to explore</span></div><div class="building-strip"><label for="city-building-nav">Open a building</label><select id="city-building-nav" aria-label="Open a building"><option value="">Choose a building…</option><option value="hq">BIS HQ</option>${data.buildings.map((b: Row) => `<option value="building:${e(b.id)}">${e(b.name)}</option>`).join("")}</select></div></section>${cityEditing ? cityEditor() : ""}</div>`;
 }
 function briefDock() {
   return `<aside class="brief-dock" id="brief-dock" aria-label="Floating morning brief"><div class="brief-dock-handle" id="brief-dock-handle"><strong>Morning Brief</strong><span>Drag to move</span>${button("×", "toggle-brief-dock", 'aria-label="Close brief panel"')}</div><div class="brief-dock-body"><div class="brief-dock-stats"><span><strong>${pending().length}</strong> need you</span><span><strong>${data.queue.length}</strong> queued</span></div><h3>Waiting on you</h3>${reviewCards(1)}<h3>Next on the agenda</h3>${
@@ -319,7 +320,7 @@ function goalsPanel() {
 }
 function focusedPage() {
   if (view === "brief")
-    return `${heading("DAILY FOCUS", "Morning Brief", "Your crew, decisions and agenda in one place.")}<div class="focused-brief">${morningBrief()}</div><section class="panel spaced"><h2>While you were away</h2>${timeline(data.events.slice(0, 10))}</section>`;
+    return `${heading("DAILY FOCUS", "Morning Brief", "Your crew, decisions and agenda in one place.")}<div class="focused-brief">${morningBrief()}</div><section class="panel spaced"><h2>While you were away</h2><div class="away-list" role="region" aria-label="Recent activity" tabindex="0">${timeline(data.events.slice(0, 10))}</div></section>`;
   if (view === "goals")
     return `${heading("BIS GOALS", "The bigger picture", "Progress backed by verified results.")}${goalsPanel()}`;
   if (view === "reviews")
@@ -372,6 +373,26 @@ function selectCity(key: string) {
       ? { position: [row.x, row.y || 0, row.z], model: row.model || "campus" }
       : { position: [...row.position], asset: row.asset }
     : {};
+}
+function cityPreviewKey() {
+  if (!cityEditing || !citySelected) return "";
+  const row = citySelected === "hq" ? data.hq : citySelected.startsWith("building:")
+    ? data.buildings.find((b: Row) => b.id === citySelected.slice(9))
+    : data.cityAssets.find((a: Row) => a.id === citySelected.slice(6));
+  if (!row || !cityDraft.position) return "";
+  const savedPosition = citySelected === "hq" || citySelected.startsWith("asset:")
+    ? row.position
+    : [row.x, row.y || 0, row.z];
+  const savedModel = citySelected.startsWith("asset:") ? row.asset : row.model || "campus";
+  const draftModel = citySelected.startsWith("asset:") ? cityDraft.asset : cityDraft.model;
+  return draftModel !== savedModel || cityDraft.position.some((n: number, i: number) => n !== savedPosition[i])
+    ? JSON.stringify([citySelected, draftModel, cityDraft.position])
+    : "";
+}
+function switchCitySelection(key: string) {
+  const hadUnsavedPreview = Boolean(cityPreviewKey());
+  selectCity(key);
+  void render(!hadUnsavedPreview);
 }
 function cityEditor() {
   const building = citySelected === "hq" || citySelected.startsWith("building:");
@@ -786,8 +807,21 @@ async function render(preserveWorld = false) {
   document
     .querySelector<HTMLSelectElement>("#city-item")
     ?.addEventListener("change", (event) => {
-      selectCity((event.target as HTMLSelectElement).value);
-      void render(true);
+      switchCitySelection((event.target as HTMLSelectElement).value);
+    });
+  document
+    .querySelector<HTMLSelectElement>("#city-building-nav")
+    ?.addEventListener("change", (event) => {
+      const destination = (event.target as HTMLSelectElement).value;
+      if (!destination) return;
+      if (destination === "hq") view = "hq";
+      else {
+        const building = data.buildings.find((b: Row) => b.id === destination.slice(9));
+        if (!building) return;
+        selected = building.agentId || building.id;
+        view = building.agentId ? "office" : "project";
+      }
+      void render();
     });
   document
     .querySelector<HTMLSelectElement>("#city-model")
@@ -858,18 +892,16 @@ async function render(preserveWorld = false) {
         onSelect: (id: string) => {
           if (cityEditing && view === "city") {
             if (id === "hq") {
-              selectCity("hq");
-              void render(true);
+              switchCitySelection("hq");
               return;
             }
             const building = data.buildings.find(
               (b: Row) => b.agentId === id || `project:${b.id}` === id,
             );
-            if (building) selectCity(`building:${building.id}`);
+            if (building) switchCitySelection(`building:${building.id}`);
             else if (id.startsWith("cityasset:"))
-              selectCity(`asset:${id.slice(10)}`);
+              switchCitySelection(`asset:${id.slice(10)}`);
             else return;
-            void render(true);
             return;
           }
           if (id.startsWith("furniture:")) {
