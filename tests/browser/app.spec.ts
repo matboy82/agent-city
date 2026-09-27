@@ -164,6 +164,24 @@ test("city assets and record-driven HQ animation scene load cleanly", async ({ p
     await expect(page.locator("#hq-zone-content > .section-title h2")).toHaveText(title);
   }
 });
+test("a Hermes profile portrait and animated avatar load from bundled assets", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium");
+  await page.route("**/api/actions", async (route) => {
+    if (route.request().method() !== "POST" || JSON.parse(route.request().postData() || "{}").action !== "get_dashboard") return route.continue();
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    snapshot.agents.push({ ...snapshot.agents[0], id: "ted", name: "Ted", avatar: null, connection: "Connected", status: "active", activity: "typing", currentTask: "Writing an architecture review" });
+    await route.fulfill({ response, json: snapshot });
+  });
+  await login(page);
+  await page.getByRole("button", { name: "Your crew", exact: true }).click();
+  await page.locator(".agent-card").filter({ has: page.getByRole("heading", { name: "Ted" }) }).getByRole("button", { name: "Enter office" }).click();
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", { timeout: 30000 });
+  await expect(page.locator('img[src="/assets/portraits/ted.jpg"]').first()).toBeVisible();
+  const diagnostics = JSON.parse((await page.locator("#world").getAttribute("data-diagnostics")) || "{}");
+  expect(diagnostics.failures).toEqual([]);
+  await page.screenshot({ path: "test-results/ted-profile-office.png", fullPage: true });
+});
 test("owner controls, office, durable note, settings and responsive navigation", async ({
   page,
 }, testInfo) => {
@@ -205,13 +223,19 @@ test("owner controls, office, durable note, settings and responsive navigation",
   await page
     .getByLabel("Message Jeff", { exact: true })
     .fill("A note recorded from the browser acceptance test.");
-  await page.getByRole("button", { name: "Send note", exact: false }).click();
+  await page.locator("#world").evaluate((canvas) => canvas.setAttribute("data-chat-canvas", "retained"));
+  await page.getByRole("button", { name: "Send message", exact: false }).click();
   await expect(
     page
-      .locator(".message")
+      .locator(".chat-bubble.mine")
       .filter({ hasText: "A note recorded from the browser acceptance test." })
       .first(),
   ).toContainText("Queued");
+  await expect(page.locator("#world")).toHaveAttribute("data-chat-canvas", "retained");
+  await expect(page.locator("#chat-presence")).toContainText("Waiting for agent connection");
+  await page.getByRole("button", { name: "New session", exact: true }).click();
+  await expect(page.locator("#chat-messages")).toContainText("Start a conversation");
+  await expect(page.locator("#world")).toHaveAttribute("data-chat-canvas", "retained");
   await page
     .getByRole("button", { name: "Back to city", exact: false })
     .click();
@@ -332,6 +356,14 @@ test("office polling keeps the live canvas through heartbeats and other updates"
     const jeff = snapshot.agents.find((agent: any) => agent.id === "jeff");
     jeff.sequence += polls;
     jeff.lastSeen = new Date().toISOString();
+    if (polls > 1) {
+      jeff.connection = "Connected";
+      jeff.status = "active";
+      jeff.activity = "typing";
+      jeff.currentTask = "Replying to Matt";
+    }
+    const conversation = snapshot.conversations.filter((c: any) => c.agentId === "jeff").sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt))[0];
+    snapshot.messages.push({ id: "poll-chat", agentId: "jeff", conversationId: conversation?.id || null, scope: "private", author: "matt", body: "Keep the office in place", status: polls > 1 ? "replied" : "queued", reply: polls > 1 ? "I am here." : undefined, createdAt: new Date().toISOString() });
     if (polls > 1)
       snapshot.queue.push({
         id: "poll-update",
@@ -343,6 +375,7 @@ test("office polling keeps the live canvas through heartbeats and other updates"
   });
   await expect.poll(() => polls, { timeout: 40000 }).toBeGreaterThanOrEqual(2);
   await expect(page.locator("#world")).toHaveAttribute("data-ready", "true");
+  await expect(page.locator("#chat-messages .theirs")).toContainText("I am here.");
   expect(
     await page.evaluate(
       () =>

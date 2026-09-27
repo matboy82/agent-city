@@ -74,6 +74,8 @@ function modelBytes(path: string) {
 }
 let cityCamera: number[] | null = null;
 let cityCameraExtent = 12;
+const profileAvatars = new Set(["angela", "arthur", "calvin", "chad", "irene", "jeff", "jefferson", "jonathan", "mark", "nerby", "opal", "proctor", "rachel", "sally", "steve", "ted", "triton", "video", "zack"]);
+const characterPath = (id: string) => `/assets/characters/${["jeff", "relay", "jefferson", "jev"].includes(id) ? id : profileAvatars.has(id) ? `profile-${id}` : "neutral"}.glb`;
 export async function mountWorld(
   canvas: HTMLCanvasElement,
   opts: {
@@ -254,9 +256,13 @@ export async function mountWorld(
       root.parent = anchor;
       anchor.position.set(pos[0], pos[1], pos[2]);
       anchor.rotation.y = rotation;
+      if (path.includes("/characters/profile-")) scene.onBeforeRenderObservable.add(() => {
+        anchor.rotation.y = Math.atan2(camera.position.x - anchor.position.x, camera.position.z - anchor.position.z);
+      });
       for (const m of root.getChildMeshes()) {
-        m.receiveShadows = true;
-        if (shadowCount < (mobile ? 6 : 12)) {
+        const sprite = path.includes("/characters/profile-");
+        m.receiveShadows = !sprite;
+        if (!sprite && shadowCount < (mobile ? 6 : 12)) {
           shadows.addShadowCaster(m);
           shadowCount++;
         }
@@ -725,6 +731,8 @@ export async function mountWorld(
     { root: TransformNode; origin: number[] }
   >();
   let officeAvatar: TransformNode | null = null;
+  let officeMode = agent ? resolveActivity(agent, data.runs) : "idle";
+  let officeLive = agent?.connection === "Connected";
   let featurePedestal: ReturnType<typeof box> | null = null;
   let seatedPose = false;
   if (opts.headquarters) {
@@ -875,7 +883,7 @@ export async function mountWorld(
       const baseX = sx + (index % 2 ? 1.4 : -1.4);
       const baseZ = sz + (index > 3 ? -1.1 : 1.1);
       tasks.push(model(
-        `/assets/characters/${["jeff", "relay", "jefferson", "jev"].includes(crew.id) ? crew.id : "neutral"}.glb`,
+        characterPath(crew.id),
         [baseX, 0, baseZ], 1.5, "height", 0, `agent:${crew.id}`,
       ).then((avatar) => {
         if (!avatar) return;
@@ -1488,22 +1496,21 @@ export async function mountWorld(
       );
     }
     // Supplied prototype bodies retain their existing identity; no portrait-to-body inference.
-    const live = agent.connection === "Connected";
-    const mode = resolveActivity(agent, data.runs);
+    const mode = officeMode;
     const seated = ["typing", "reading", "on_call"].includes(mode);
     seatedPose = seated;
     const chairOffset = opts.positionDraft?.task_chair ||
       agent.officePositions?.task_chair || [0, 0, 0];
     const station = seated
-      ? [1.3 + chairOffset[0], chairOffset[1], 0.18 + chairOffset[2]]
+      ? [1.3 + chairOffset[0], chairOffset[1], (profileAvatars.has(agent.id) && !["jeff", "jefferson"].includes(agent.id) ? 0.68 : 0.18) + chairOffset[2]]
       : mode === "presenting"
         ? [3.2, 0, -2.7]
         : [1.3, 0, 1.3];
     tasks.push(
       model(
-        `/assets/characters/${["jeff", "relay", "jefferson", "jev"].includes(agent.id) ? agent.id : "neutral"}.glb`,
+        characterPath(agent.id),
         station,
-        1.75,
+        profileAvatars.has(agent.id) && !["jeff", "jefferson"].includes(agent.id) ? 2.05 : 1.75,
         "height",
         0,
         "agent:" + agent.id,
@@ -1578,22 +1585,35 @@ export async function mountWorld(
           head.rotationQuaternion = null;
           head.rotation.x = mode === "reading" ? 0.18 : 0;
         }
-        if (!opts.reduced && live && mode !== "idle")
+        if (!opts.reduced)
           scene.onBeforeRenderObservable.add(() => {
+            const current = officeMode;
+            if (!officeLive || current === "idle") {
+              avatar.position.y = 0;
+              if (left) { left.rotation.x = 0; left.rotation.z = 0; }
+              if (right) { right.rotation.x = 0; right.rotation.z = 0; }
+              if (head) { head.rotation.x = 0; head.rotation.y = 0; }
+              return;
+            }
             const t = performance.now() / 1000;
-            if (mode === "typing") {
+            if (left) { left.rotation.x = 0; left.rotation.z = 0; }
+            if (right) { right.rotation.x = current === "on_call" ? -2.1 : 0; right.rotation.z = 0; }
+            if (head) { head.rotation.x = 0; head.rotation.y = 0; }
+            if (profileAvatars.has(agent.id) && !["jeff", "jefferson"].includes(agent.id) && current !== "walking")
+              avatar.position.y = Math.sin(t * (current === "typing" ? 5 : 1.6)) * (current === "celebrating" ? 0.09 : 0.025);
+            if (current === "typing") {
               if (left) left.rotation.x = -1 + Math.sin(t * 8) * 0.12;
               if (right) right.rotation.x = -1 + Math.sin(t * 8 + 1) * 0.12;
             }
-            if (mode === "presenting" && right) {
+            if (current === "presenting" && right) {
               right.rotation.x = -1.1 + Math.sin(t * 1.25) * 0.13;
               right.rotation.z = -0.65 + Math.sin(t * 1.8) * 0.08;
             }
-            if (mode === "reading" && head)
+            if (current === "reading" && head)
               head.rotation.x = 0.18 + Math.sin(t * 0.7) * 0.025;
-            if (mode === "on_call" && head)
+            if (current === "on_call" && head)
               head.rotation.y = Math.sin(t * 0.42) * 0.08;
-            if (mode === "walking") {
+            if (current === "walking") {
               avatar.position.x = 1.3 + Math.sin(t * 0.58) * 1.3;
               avatar.position.z = 1.3 + Math.sin(t * 1.16) * 0.25;
               const l = node("left-leg"),
@@ -1603,10 +1623,10 @@ export async function mountWorld(
               if (r) r.rotation.x = -stride;
               if (left) left.rotation.x = -stride * 0.7;
               if (right) right.rotation.x = stride * 0.7;
-              avatar.rotation.y =
-                Math.cos(t * 0.58) > 0 ? Math.PI / 2 : -Math.PI / 2;
+              if (!profileAvatars.has(agent.id) || ["jeff", "jefferson"].includes(agent.id))
+                avatar.rotation.y = Math.cos(t * 0.58) > 0 ? Math.PI / 2 : -Math.PI / 2;
             }
-            if (mode === "celebrating") {
+            if (current === "celebrating") {
               if (left) {
                 left.rotation.x = -2.5;
                 left.rotation.z = 0.3;
@@ -1730,6 +1750,21 @@ export async function mountWorld(
     }
   });
   return {
+    updateActivity(nextAgent: Row, runs: Row[]) {
+      if (!agent || nextAgent.id !== agent.id) return;
+      const next = resolveActivity(nextAgent, runs);
+      officeLive = nextAgent.connection === "Connected";
+      if (next === officeMode || !officeAvatar) return;
+      officeMode = next;
+      seatedPose = ["typing", "reading", "on_call"].includes(next);
+      const offset = opts.positionDraft?.task_chair || nextAgent.officePositions?.task_chair || [0, 0, 0];
+      officeAvatar.position.set(
+        next === "presenting" ? 3.2 : 1.3 + (next === "walking" ? 0 : offset[0]),
+        0,
+        next === "presenting" ? -2.7 : seatedPose ? (profileAvatars.has(nextAgent.id) && !["jeff", "jefferson"].includes(nextAgent.id) ? 0.68 : 0.18) + offset[2] : 1.3,
+      );
+      officeAvatar.rotation.y = 0;
+    },
     moveItem(slot: string, offset: number[]) {
       const item = officeItems.get(slot),
         base = officeAnchors.get(slot);

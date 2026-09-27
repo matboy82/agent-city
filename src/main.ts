@@ -12,6 +12,7 @@ let token = "",
     localStorage.getItem("crew.motion") === "true" ||
     matchMedia("(prefers-reduced-motion: reduce)").matches;
 const portraitUrls = new Map<string, string>();
+const profilePortraits = new Set(["angela", "arthur", "calvin", "chad", "irene", "jeff", "jefferson", "jonathan", "mark", "nerby", "opal", "proctor", "rachel", "sally", "steve", "ted", "triton", "video", "zack"]);
 const previewDesigns = new Map<string, Row>();
 const chatSelection = new Map<string, string>();
 let navCollapsed = localStorage.getItem("crew.navCollapsed") === "true";
@@ -33,6 +34,7 @@ let world: {
     reset: () => void;
     moveItem: (slot: string, offset: number[]) => void;
     moveCityItem: (key: string, position: number[]) => void;
+    updateActivity: (agent: Row, runs: Row[]) => void;
   } | null = null,
   worldKey = "",
   renderVersion = 0,
@@ -80,8 +82,8 @@ const badge = (v: string) =>
 const button = (text: string, action: string, extra = "", cls = "") =>
   `<button class="${cls}" data-action="${action}" ${extra}>${text}</button>`;
 const avatar = (a: Row, size = "") =>
-  a.avatar && !a.avatar.startsWith("/api")
-    ? `<img class="avatar ${size}" src="${e(a.avatar)}" alt="${e(a.name)}'s supplied portrait">`
+  (a.avatar && !a.avatar.startsWith("/api")) || profilePortraits.has(a.id)
+    ? `<img class="avatar ${size}" loading="lazy" src="${e(a.avatar && !a.avatar.startsWith("/assets/") ? a.avatar : profilePortraits.has(a.id) ? `/assets/portraits/${a.id}.jpg` : a.avatar)}" alt="${e(a.name)}'s portrait">`
     : `<span class="avatar neutral ${size}" aria-label="${e(a.name)} — portrait not supplied">${e(a.name?.slice(0, 2).toUpperCase())}</span>`;
 async function api(action: string, input: Row = {}) {
   const r = await fetch("/api/actions", {
@@ -151,18 +153,11 @@ function sceneKey() {
       selected,
       dusk,
       reduced,
-      a?.connection,
-      a?.status,
-      a?.activity,
-      a?.currentTask,
       a?.name,
       a?.effectiveDesign,
       a?.officePositions,
       a?.designSource,
       a?.revision,
-      data.runs.filter((r: Row) => r.agentId === selected).map((r: Row) => [r.id, r.status]),
-      data.work.filter((w: Row) => w.raci.responsible.includes(selected))
-        .length,
     ]);
   }
   if (view === "city")
@@ -460,7 +455,7 @@ function chatMarkup(agentId: string) {
   const hasLegacy = data.messages.some((m: Row) => m.agentId === agentId && m.scope === "private" && !m.conversationId);
   const pending = data.messages.some((m: Row) => m.conversationId === conversation && ["queued", "delivered", "acknowledged"].includes(m.status));
   const active = agent(agentId)?.connection === "Connected";
-  return `<div class="chat-header"><label>Session<select id="chat-session">${conversations.map((c: Row, index: number) => `<option value="${e(c.id)}" ${c.id === conversation ? "selected" : ""}>${index === 0 ? "Latest" : "Earlier"} · ${time(c.createdAt)}</option>`).join("")}${hasLegacy || !conversations.length ? `<option value="legacy" ${conversation === "legacy" ? "selected" : ""}>Earlier notes</option>` : ""}</select></label>${button("New session", "new-chat-session")}</div><div class="messages" id="chat-messages" role="log" aria-label="Conversation with ${e(agent(agentId)?.name)}">${chatMessages(agentId, conversation)}</div><div class="chat-presence" id="chat-presence" aria-live="polite">${pending ? `<span class="typing-dots"><i></i><i></i><i></i></span>${active ? "Working on your reply" : "Waiting for agent connection"}` : active ? "Connected · ready to chat" : "Offline · messages queue until connected"}</div>`;
+  return `<div class="chat-header"><label>Session<select id="chat-session">${conversations.map((c: Row, index: number) => `<option value="${e(c.id)}" ${c.id === conversation ? "selected" : ""}>${index === 0 ? "Latest" : "Earlier"} · ${time(c.createdAt)}</option>`).join("")}${hasLegacy || !conversations.length ? `<option value="legacy" ${conversation === "legacy" ? "selected" : ""}>Earlier notes</option>` : ""}</select></label>${button("New session", "new-chat-session")}</div><div class="messages" id="chat-messages" role="log" aria-label="Conversation with ${e(agent(agentId)?.name)}">${chatMessages(agentId, conversation)}</div><div class="chat-presence" id="chat-presence" aria-live="polite">${pending ? `<span class="typing-dots"><i></i><i></i><i></i></span>${active ? agent(agentId)?.activity === "typing" ? "Typing a reply" : "Working on your reply" : "Waiting for agent connection"}` : active ? "Connected · ready to chat" : "Offline · messages queue until connected"}</div>`;
 }
 function updateChatPane(scroll = false) {
   if (view !== "office" && view !== "agent") return;
@@ -2207,7 +2202,9 @@ async function boot() {
             const previousScene = sceneKey();
             await refresh();
             if (view === "office" && sceneKey() === previousScene) {
-              updateChatPane();
+              const current = agent(selected);
+              if (current) world?.updateActivity(current, data.runs);
+              if (presentationKey(data) !== old) updateChatPane();
               return;
             }
             if (
