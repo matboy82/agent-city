@@ -75,7 +75,7 @@ function modelBytes(path: string) {
 let cityCamera: number[] | null = null;
 let cityCameraExtent = 12;
 const profileAvatars = new Set(["angela", "arthur", "calvin", "chad", "irene", "jeff", "jefferson", "jonathan", "mark", "nerby", "opal", "proctor", "rachel", "sally", "steve", "ted", "triton", "video", "zack"]);
-const characterPath = (id: string) => `/assets/characters/${["jeff", "relay", "jefferson", "jev"].includes(id) ? id : profileAvatars.has(id) ? `profile-${id}` : "neutral"}.glb`;
+const characterPath = (id: string) => `/assets/characters/${["jeff", "relay", "jev"].includes(id) ? id : profileAvatars.has(id) ? `profile-${id}` : "neutral"}.glb`;
 export async function mountWorld(
   canvas: HTMLCanvasElement,
   opts: {
@@ -256,13 +256,9 @@ export async function mountWorld(
       root.parent = anchor;
       anchor.position.set(pos[0], pos[1], pos[2]);
       anchor.rotation.y = rotation;
-      if (path.includes("/characters/profile-")) scene.onBeforeRenderObservable.add(() => {
-        anchor.rotation.y = Math.atan2(camera.position.x - anchor.position.x, camera.position.z - anchor.position.z);
-      });
       for (const m of root.getChildMeshes()) {
-        const sprite = path.includes("/characters/profile-");
-        m.receiveShadows = !sprite;
-        if (!sprite && shadowCount < (mobile ? 6 : 12)) {
+        m.receiveShadows = true;
+        if (shadowCount < (mobile ? 6 : 12)) {
           shadows.addShadowCaster(m);
           shadowCount++;
         }
@@ -1502,7 +1498,7 @@ export async function mountWorld(
     const chairOffset = opts.positionDraft?.task_chair ||
       agent.officePositions?.task_chair || [0, 0, 0];
     const station = seated
-      ? [1.3 + chairOffset[0], chairOffset[1], (profileAvatars.has(agent.id) && !["jeff", "jefferson"].includes(agent.id) ? 0.68 : 0.18) + chairOffset[2]]
+      ? [1.3 + chairOffset[0], chairOffset[1], 0.18 + chairOffset[2]]
       : mode === "presenting"
         ? [3.2, 0, -2.7]
         : [1.3, 0, 1.3];
@@ -1510,7 +1506,7 @@ export async function mountWorld(
       model(
         characterPath(agent.id),
         station,
-        profileAvatars.has(agent.id) && !["jeff", "jefferson"].includes(agent.id) ? 2.05 : 1.75,
+        1.75,
         "height",
         0,
         "agent:" + agent.id,
@@ -1599,8 +1595,6 @@ export async function mountWorld(
             if (left) { left.rotation.x = 0; left.rotation.z = 0; }
             if (right) { right.rotation.x = current === "on_call" ? -2.1 : 0; right.rotation.z = 0; }
             if (head) { head.rotation.x = 0; head.rotation.y = 0; }
-            if (profileAvatars.has(agent.id) && !["jeff", "jefferson"].includes(agent.id) && current !== "walking")
-              avatar.position.y = Math.sin(t * (current === "typing" ? 5 : 1.6)) * (current === "celebrating" ? 0.09 : 0.025);
             if (current === "typing") {
               if (left) left.rotation.x = -1 + Math.sin(t * 8) * 0.12;
               if (right) right.rotation.x = -1 + Math.sin(t * 8 + 1) * 0.12;
@@ -1623,8 +1617,7 @@ export async function mountWorld(
               if (r) r.rotation.x = -stride;
               if (left) left.rotation.x = -stride * 0.7;
               if (right) right.rotation.x = stride * 0.7;
-              if (!profileAvatars.has(agent.id) || ["jeff", "jefferson"].includes(agent.id))
-                avatar.rotation.y = Math.cos(t * 0.58) > 0 ? Math.PI / 2 : -Math.PI / 2;
+              avatar.rotation.y = Math.cos(t * 0.58) > 0 ? Math.PI / 2 : -Math.PI / 2;
             }
             if (current === "celebrating") {
               if (left) {
@@ -1719,6 +1712,7 @@ export async function mountWorld(
     const loading = canvas.parentElement?.querySelector("#world-loading");
     loading?.classList.add("ready");
     canvas.dataset.ready = "true";
+    if (agent) canvas.dataset.activity = officeMode;
     if (opts.headquarters) {
       const viewport = camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight());
       canvas.dataset.zoneTargets = JSON.stringify(Object.fromEntries(
@@ -1738,6 +1732,7 @@ export async function mountWorld(
       source: agent?.designSource,
       revision: agent?.revision,
       activity: agent ? resolveActivity(agent, data.runs) : null,
+      articulatedJoints: agent && officeAvatar ? officeAvatar.getDescendants(false).filter((node) => /^(left-arm|right-arm|left-leg|right-leg|head)-/.test(node.name) && !(node as any).getTotalVertices).length : 0,
       connectedCrewInHq: opts.headquarters ? data.agents.filter((a: Row) => a.connection === "Connected").length : 0,
       deliveredEvidenceInHq: opts.headquarters ? Math.min(3, data.artifacts.length) : 0,
       recentAcknowledgedHandoff: opts.headquarters && data.commands.some((c: Row) => c.verb === "handoff.accept" && c.status === "completed" && Date.now() - Date.parse(c.updatedAt || c.issuedAt) < 120000),
@@ -1756,12 +1751,13 @@ export async function mountWorld(
       officeLive = nextAgent.connection === "Connected";
       if (next === officeMode || !officeAvatar) return;
       officeMode = next;
+      canvas.dataset.activity = officeMode;
       seatedPose = ["typing", "reading", "on_call"].includes(next);
       const offset = opts.positionDraft?.task_chair || nextAgent.officePositions?.task_chair || [0, 0, 0];
       officeAvatar.position.set(
         next === "presenting" ? 3.2 : 1.3 + (next === "walking" ? 0 : offset[0]),
         0,
-        next === "presenting" ? -2.7 : seatedPose ? (profileAvatars.has(nextAgent.id) && !["jeff", "jefferson"].includes(nextAgent.id) ? 0.68 : 0.18) + offset[2] : 1.3,
+        next === "presenting" ? -2.7 : seatedPose ? 0.18 + offset[2] : 1.3,
       );
       officeAvatar.rotation.y = 0;
     },

@@ -166,11 +166,13 @@ test("city assets and record-driven HQ animation scene load cleanly", async ({ p
 });
 test("a Hermes profile portrait and animated avatar load from bundled assets", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium");
+  test.setTimeout(120000);
   await page.route("**/api/actions", async (route) => {
     if (route.request().method() !== "POST" || JSON.parse(route.request().postData() || "{}").action !== "get_dashboard") return route.continue();
     const response = await route.fetch();
     const snapshot = await response.json();
-    snapshot.agents.push({ ...snapshot.agents[0], id: "ted", name: "Ted", avatar: null, connection: "Connected", status: "active", activity: "typing", currentTask: "Writing an architecture review" });
+    for (const name of ["ted", "arthur", "opal", "proctor", "triton"])
+      snapshot.agents.push({ ...snapshot.agents[0], id: name, name: name[0].toUpperCase() + name.slice(1), avatar: null, connection: "Connected", status: "active", activity: "typing", currentTask: "Writing an architecture review" });
     await route.fulfill({ response, json: snapshot });
   });
   await login(page);
@@ -180,7 +182,19 @@ test("a Hermes profile portrait and animated avatar load from bundled assets", a
   await expect(page.locator('img[src="/assets/portraits/ted.jpg"]').first()).toBeVisible();
   const diagnostics = JSON.parse((await page.locator("#world").getAttribute("data-diagnostics")) || "{}");
   expect(diagnostics.failures).toEqual([]);
+  expect(diagnostics.articulatedJoints).toBeGreaterThanOrEqual(5);
+  await expect(page.locator("#world")).toHaveAttribute("data-activity", "typing");
   await page.screenshot({ path: "test-results/ted-profile-office.png", fullPage: true });
+  for (const name of ["Arthur", "Opal", "Proctor", "Triton"]) {
+    await page.getByRole("button", { name: "Back to city" }).click();
+    await page.getByRole("button", { name: "Your crew", exact: true }).click();
+    await page.locator(".agent-card").filter({ has: page.getByRole("heading", { name }) }).getByRole("button", { name: "Enter office" }).click();
+    await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", { timeout: 30000 });
+    const state = JSON.parse((await page.locator("#world").getAttribute("data-diagnostics")) || "{}");
+    expect(state.failures, `${name}'s modeled asset should load`).toEqual([]);
+    expect(state.articulatedJoints, `${name} should have animated pivots`).toBeGreaterThanOrEqual(5);
+    if (["Opal", "Triton"].includes(name)) await page.screenshot({ path: `test-results/${name.toLowerCase()}-profile-office.png`, fullPage: true });
+  }
 });
 test("owner controls, office, durable note, settings and responsive navigation", async ({
   page,
