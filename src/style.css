@@ -2184,3 +2184,65 @@ label[hidden] {
     width: 100%;
   }
 }
+.world-loading.fallback {
+  display: block;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+}
+.world-loading.fallback .fallback-campus {
+  padding: 24px 18px;
+}
+.fallback-office {
+  width: min(100%, 520px);
+  margin: 0 auto;
+  padding: 34px 24px;
+  text-align: left;
+  color: var(--ink);
+}
+.fallback-office-identity {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin: 18px 0 26px;
+}
+.fallback-office-identity h2 {
+  margin: 0 0 8px;
+}
+.fallback-office-identity p {
+  margin: 0 0 10px;
+  color: var(--muted);
+}
+.fallback-office-work {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 24px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.fallback-office-work small {
+  color: var(--muted);
+  letter-spacing: .11em;
+}
+.fallback-office-work strong {
+  font-size: 16px;
+}
+.fallback-office-work span {
+  color: var(--muted);
+  font-size: 12px;
+}
+@media (max-width: 700px) {
+  .fallback-office {
+    padding: 22px 15px;
+  }
+  .fallback-office-identity {
+    gap: 12px;
+  }
+  .fallback-office-identity .avatar.large {
+    width: 88px;
+    height: 88px;
+    border-radius: 20px;
+  }
+}

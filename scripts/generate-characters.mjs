@@ -376,15 +376,108 @@ function createRelayCharacter() {
   return root;
 }
 
+function createHawkCharacter() {
+  const root = new THREE.Group();
+  root.name = "jev";
+  root.userData.characterId = "jev";
+  const feather = material(0x75442d, { roughness: .91 });
+  const russet = material(0xa8673f, { roughness: .88 });
+  const darkFeather = material(0x3c302c, { roughness: .91 });
+  const cream = material(0xf2e0c5, { roughness: .88 });
+  const vest = material(0x1e304d, { roughness: .65 });
+  const trim = material(0x577ca8, { roughness: .42, metalness: .16 });
+  const gold = material(0xe5aa3e, { roughness: .46 });
+  const amber = material(0xc38428, { roughness: .24 });
+  const ink = material(0x17202a, { roughness: .36 });
+  const white = material(0xfff7e8, { roughness: .35 });
+  const curved = (parent, points, radius, source, name) =>
+    addMesh(parent, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p))), 14, radius, 7), source, [0, 0, 0], name);
+
+  for (const side of [-1, 1]) {
+    const name = side < 0 ? "left" : "right";
+    const leg = new THREE.Group();
+    leg.name = `${name}-leg`;
+    leg.position.set(side * .22, 1.02, .02);
+    root.add(leg);
+    addMesh(leg, new THREE.CapsuleGeometry(.125, .62, 4, 10), darkFeather, [0, -.43, 0], `${name}-leg-mesh`);
+    const shoe = addMesh(leg, new THREE.SphereGeometry(.20, 14, 10), gold, [0, -.87, .15], `${name}-shoe`);
+    shoe.scale.set(1.18, .48, 1.6);
+    for (let toe = -1; toe <= 1; toe++)
+      curved(leg, [[toe * .10, -.90, .25], [toe * .13, -.91, .43], [toe * .14, -.98, .49]], .034, ink, `${name}-talon-${toe}`);
+    const wing = new THREE.Group();
+    wing.name = `${name}-arm`;
+    wing.position.set(side * .53, 2.12, 0);
+    root.add(wing);
+    const upper = addMesh(wing, new THREE.CapsuleGeometry(.16, .61, 5, 12), feather, [side * .07, -.39, .01], `${name}-wing-base`);
+    upper.rotation.z = side * .13;
+    for (let i = 0; i < 6; i++) {
+      const outer = addMesh(wing, new THREE.SphereGeometry(.14, 12, 9), i % 2 ? russet : darkFeather, [side * (.14 + i * .027), -.28 - i * .105, .08 - i * .006], `${name}-layered-wing-feather-${i}`);
+      outer.scale.set(.80 - i * .04, 1.52 - i * .04, .46);
+      outer.rotation.z = side * (.10 + i * .06);
+    }
+    const hand = new THREE.Group();
+    hand.name = `${name}-hand`;
+    hand.position.set(side * .18, -.82, .08);
+    wing.add(hand);
+    const tip = addMesh(hand, new THREE.SphereGeometry(.16, 12, 9), feather, [0, 0, 0], `${name}-hand-mesh`);
+    tip.scale.set(.8, 1.2, .55);
+  }
+  const body = addMesh(root, new THREE.SphereGeometry(.60, 24, 16), feather, [0, 1.62, 0], "hawk-body");
+  body.scale.set(1.07, 1.25, .75);
+  const bib = addMesh(root, new THREE.SphereGeometry(.45, 20, 14), cream, [0, 1.75, .33], "cream-throat-and-chest");
+  bib.scale.set(.78, 1.15, .42);
+  for (const side of [-1, 1]) {
+    const panel = addMesh(root, new THREE.BoxGeometry(.30, .86, .11), vest, [side * .29, 1.69, .39], `${side < 0 ? "left" : "right"}-vest-panel`);
+    panel.rotation.z = side * -.13;
+    curved(root, [[side * .39, 2.12, .43], [side * .24, 1.90, .49], [side * .23, 1.49, .46]], .024, trim, `vest-piping-${side}`);
+    for (let i = 0; i < 4; i++) {
+      const tail = addMesh(root, new THREE.ConeGeometry(.09, .76 - i * .07, 7), i % 2 ? russet : darkFeather, [side * (.08 + i * .06), .70, -.43 - i * .03], `tail-feather-${side}-${i}`);
+      tail.rotation.x = -.35;
+      tail.rotation.z = side * .08;
+    }
+  }
+  addMesh(root, new THREE.SphereGeometry(.065, 12, 8), trim, [.30, 1.86, .48], "judgment-pin");
+
+  const head = new THREE.Group();
+  head.name = "head";
+  head.position.set(0, 2.66, .01);
+  root.add(head);
+  const skull = addMesh(head, new THREE.SphereGeometry(.48, 26, 18), feather, [0, 0, 0], "hawk-head");
+  skull.scale.set(1.05, 1.13, .90);
+  for (const side of [-1, 1]) {
+    const cheek = addMesh(head, new THREE.SphereGeometry(.22, 16, 11), cream, [side * .32, -.19, .22], `${side < 0 ? "left" : "right"}-cream-cheek`);
+    cheek.scale.set(.65, 1.10, .70);
+    addMesh(head, new THREE.SphereGeometry(.115, 16, 12), gold, [side * .19, .065, .39], `${side < 0 ? "left" : "right"}-eye-ring`);
+    addMesh(head, new THREE.SphereGeometry(.083, 16, 12), amber, [side * .19, .065, .48], `${side < 0 ? "left" : "right"}-amber-eye`);
+    addMesh(head, new THREE.SphereGeometry(.041, 12, 9), ink, [side * .19, .06, .55], `${side < 0 ? "left" : "right"}-pupil`);
+    addMesh(head, new THREE.SphereGeometry(.013, 8, 6), white, [side * .19 - .012, .085, .585], "eye-glint");
+    curved(head, [[side * .06, .22, .47], [side * .19, .25, .46], [side * .34, .17, .36]], .045, darkFeather, `fierce-brow-${side}`);
+    const crest = addMesh(head, new THREE.ConeGeometry(.115, .42, 8), side < 0 ? russet : feather, [side * .18, .54, -.12], `crest-feather-${side}`);
+    crest.rotation.z = -side * .42;
+  }
+  addMesh(head, new THREE.SphereGeometry(.17, 16, 11), gold, [0, -.11, .44], "beak-cere").scale.set(.91, .64, .98);
+  const beak = addMesh(head, new THREE.ConeGeometry(.16, .43, 12), ink, [0, -.24, .56], "hooked-beak");
+  beak.rotation.z = Math.PI;
+  beak.rotation.x = -.26;
+  addMesh(head, new THREE.SphereGeometry(.032, 10, 7), darkFeather, [.09, -.09, .59], "nostril");
+  for (let i = 0; i < 4; i++) {
+    const nape = addMesh(head, new THREE.ConeGeometry(.11, .32, 7), i % 2 ? russet : darkFeather, [(-.27 + i * .18), .16, -.35], `nape-feather-${i}`);
+    nape.rotation.x = -.55;
+  }
+  root.traverse((object) => { object.userData.avatar = true; });
+  return root;
+}
+
 const characters = [
   { id: "jeff", species: "otter", fur: 0xa7653f, clothing: 0x15334e, accent: 0x3ad0ba },
   { id: "relay" },
+  { id: "jev", species: "hawk" },
 ];
 
 await mkdir(outputDir, { recursive: true });
 const exporter = new GLTFExporter();
 for (const spec of characters) {
-  const character = spec.id === "relay" ? createRelayCharacter() : createCharacter(spec);
+  const character = spec.id === "relay" ? createRelayCharacter() : spec.species === "hawk" ? createHawkCharacter() : createCharacter(spec);
   const glb = await exporter.parseAsync(character, { binary: true, onlyVisible: true });
   await writeFile(new URL(`${spec.id}.glb`, outputDir), Buffer.from(glb));
   console.log(`wrote ${spec.id}.glb`);

@@ -218,6 +218,36 @@ test("a Hermes profile portrait and animated avatar load from bundled assets", a
     if (["Jefferson", "Opal", "Triton"].includes(name)) await page.screenshot({ path: `test-results/${name.toLowerCase()}-profile-office.png`, fullPage: true });
   }
 });
+test("Jev's hawk portrait and animated model load in his office", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium");
+  test.setTimeout(60000);
+  await page.route("**/api/actions", async (route) => {
+    if (route.request().method() !== "POST" || JSON.parse(route.request().postData() || "{}").action !== "get_dashboard") return route.continue();
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    const jev = snapshot.agents.find((agent: any) => agent.id === "jev");
+    jev.connection = "Connected";
+    jev.status = "active";
+    jev.activity = "reading";
+    jev.currentTask = "Reviewing scoring evidence";
+    await route.fulfill({ response, json: snapshot });
+  });
+  const modelRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/assets/characters/jev.glb")) modelRequests.push(request.url());
+  });
+  await login(page);
+  await page.getByRole("button", { name: "Your crew", exact: true }).click();
+  await page.locator(".agent-card").filter({ has: page.getByRole("heading", { name: "Jev" }) }).getByRole("button", { name: "Enter office" }).click();
+  await expect(page.locator("#world")).toHaveAttribute("data-ready", "true", { timeout: 30000 });
+  await expect(page.locator('img[src^="/assets/portraits/jev.jpg?v="]').first()).toBeVisible();
+  await expect(page.locator("#world")).toHaveAttribute("data-activity", "reading");
+  const state = JSON.parse((await page.locator("#world").getAttribute("data-diagnostics")) || "{}");
+  expect(state.failures).toEqual([]);
+  expect(state.articulatedJoints).toBeGreaterThanOrEqual(5);
+  expect(modelRequests.some((url) => /\/jev\.glb\?v=/.test(url))).toBe(true);
+  await page.screenshot({ path: "test-results/jev-hawk-office.png", fullPage: true });
+});
 test("owner controls, office, durable note, settings and responsive navigation", async ({
   page,
 }, testInfo) => {
@@ -440,6 +470,33 @@ test("2D fallback preserves control when WebGL cannot initialize", async ({
   await expect(
     page.getByRole("heading", { name: "Move the team forward." }),
   ).toBeVisible();
+});
+test("2D city scrolls through agents and opens their 2D offices", async ({ page }, testInfo) => {
+  test.skip(!["chromium", "mobile"].includes(testInfo.project.name));
+  await page.route("**/api/actions", async (route) => {
+    if (route.request().method() !== "POST" || JSON.parse(route.request().postData() || "{}").action !== "get_dashboard") return route.continue();
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    const jev = snapshot.agents.find((agent: any) => agent.id === "jev");
+    const otherAgents = snapshot.agents.filter((agent: any) => agent.id !== "jev");
+    const extras = Array.from({ length: 24 }, (_, index) => ({ ...otherAgents[0], id: `extra-${index}`, name: `Agent ${index}`, avatar: null }));
+    snapshot.agents = [...otherAgents, ...extras, jev];
+    await route.fulfill({ response, json: snapshot });
+  });
+  await login(page);
+  await page.getByRole("button", { name: "2D view", exact: true }).click();
+  const list = page.locator("#world-loading.fallback");
+  await expect(list).toHaveCSS("overflow-y", "auto");
+  expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await list.locator('button[data-id="jev"]').click();
+  await expect(page.getByRole("heading", { name: "Jev’s office" })).toBeVisible();
+  await expect(page.locator(".fallback-office")).toContainText("Jev's office");
+  await expect(page.locator(".fallback-office")).toContainText("Fast scoring & judgment");
+  await expect(page.getByRole("button", { name: "3D office" })).toBeVisible();
+  await expect(page.locator("#world-loading .fallback-campus")).toHaveCount(0);
+  await page.screenshot({ path: "test-results/2d-agent-office.png", fullPage: true });
+  await page.getByRole("button", { name: "Back to city" }).click();
+  await expect(page.locator("#world-loading .fallback-campus")).toBeVisible();
 });
 
 test("expanded viewer, focus pages and persistent collapsed navigation", async ({
