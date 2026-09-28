@@ -225,7 +225,7 @@ function reviewCards(limit = 100) {
       .slice(0, limit)
       .map(
         (a: Row) =>
-          `<article class="review-card"><div class="row"><span class="eyebrow">${e(a.kind)}${a.tier ? ` · ${e(a.tier)}` : ""}</span>${badge("waiting_approval")}</div><h3>${e(a.title)}</h3><p>${e(a.context)}</p>${a.artifact ? `<pre>${e(a.artifact)}</pre>` : ""}<small>${e(a.effect)}${a.requestedBy ? ` · Requested by ${e(agent(a.requestedBy)?.name || a.requestedBy)}` : ""}</small><div class="actions">${button("Review decision", "review", `data-id="${e(a.id)}"`, "primary")}</div></article>`,
+          `<article class="review-card"><div class="row"><span class="eyebrow">${e(a.kind)}${a.tier ? ` · ${e(a.tier)}` : ""}${a.jevScore != null ? ` · Jev ${a.jevScore}/10` : ""}</span>${badge("waiting_approval")}</div><h3>${e(a.title)}</h3><p>${e(a.context)}</p>${a.artifact ? `<pre>${e(a.artifact)}</pre>` : ""}<small>${e(a.effect)}${a.requestedBy ? ` · Requested by ${e(agent(a.requestedBy)?.name || a.requestedBy)}` : ""}</small><div class="actions">${button("Review decision", "review", `data-id="${e(a.id)}"`, "primary")}</div></article>`,
       )
       .join("") ||
     empty(
@@ -436,7 +436,7 @@ function cityEditor() {
   }<div class="actions"><select id="city-add-model" aria-label="Asset to add">${cityAssetModels.map(([id, name]) => `<option value="${id}">${e(name)}</option>`).join("")}</select>${button("Add campus asset", "city-add", "", "primary")}</div><small>Model and position changes preview in the city. Save each item to keep it.</small></div>`;
 }
 function workCard(w: Row) {
-  return `<article class="mission-card"><div class="row"><span class="priority ${e(w.priority)}">${e(w.priority)} priority</span>${badge(w.status)}</div><button class="mission-title" data-action="mission" data-id="${e(w.id)}">${e(w.title)}</button><p>${e(w.brief)}</p><div class="mission-footer"><span>${w.raci.responsible.map((a: string) => e(agent(a)?.name || a)).join(", ")} <small>? Matt accountable</small></span><span>rev ${w.revision}</span></div>${w.paused ? '<p class="warning">Paused · new dispatch blocked</p>' : ""}<div class="actions">${["planned", "ready", "blocked"].includes(w.status) ? button("Dispatch " + icon("arrow"), "dispatch", `data-id="${e(w.id)}"`, "primary small") : ""}${button("Inspect", "mission", `data-id="${e(w.id)}"`, "small")}${!["done", "canceled"].includes(w.status) ? button(w.paused ? "Resume" : "Pause", "work-control", `data-id="${e(w.id)}" data-operation="${w.paused ? "resume" : "pause"}"`, "small") : ""}</div></article>`;
+  return `<article class="mission-card"><div class="row"><span class="priority ${e(w.priority)}">${e(w.priority)} priority</span>${badge(w.status)}</div><button class="mission-title" data-action="mission" data-id="${e(w.id)}">${e(w.title)}</button><p>${e(w.brief)}</p>${data.commands.find((c: Row) => c.workId === w.id && c.verb === "work.start") ? `<small>Dispatch: ${e(label(data.commands.find((c: Row) => c.workId === w.id && c.verb === "work.start").exitReason || data.commands.find((c: Row) => c.workId === w.id && c.verb === "work.start").status))} ? ${data.commands.find((c: Row) => c.workId === w.id && c.verb === "work.start").runtimeSeconds ?? 0}s</small>` : ""}${w.templateProgress ? `<ol>${w.templateProgress.map((step: Row) => `<li>${e(agent(step.agentId)?.name || step.agentId)} ? ${e(label(step.status))}</li>`).join("")}</ol>` : ""}<div class="mission-footer"><span>${w.raci.responsible.map((a: string) => e(agent(a)?.name || a)).join(", ")} <small>? Matt accountable</small></span><span>rev ${w.revision}</span></div>${w.paused ? '<p class="warning">Paused · new dispatch blocked</p>' : ""}<div class="actions">${["planned", "ready", "blocked"].includes(w.status) ? button("Dispatch " + icon("arrow"), "dispatch", `data-id="${e(w.id)}"`, "primary small") : ""}${button("Inspect", "mission", `data-id="${e(w.id)}"`, "small")}${!["done", "canceled"].includes(w.status) ? button(w.paused ? "Resume" : "Pause", "work-control", `data-id="${e(w.id)}" data-operation="${w.paused ? "resume" : "pause"}"`, "small") : ""}</div></article>`;
 }
 function artifacts(rows: Row[]) {
   return (
@@ -454,7 +454,7 @@ function commandRows(rows: Row[]) {
       .slice(0, 20)
       .map(
         (c) =>
-          `<div class="command-row"><div><strong>${e(c.verb)}</strong><small>${e(c.agentId)} · ${time(c.issuedAt)}${c.runtimeSeconds != null ? ` · Ran ${c.runtimeSeconds}s${c.budgetSeconds ? ` of ${c.budgetSeconds}s` : ""} — ${e(label(c.exitReason || c.status))}` : ""}</small></div>${badge(c.status)}</div>`,
+          `<div class="command-row"><div><strong>${e(c.verb)}</strong><small>${e(c.agentId)} · ${time(c.issuedAt)}${c.runtimeSeconds != null ? ` · Ran ${c.runtimeSeconds}s${c.budgetSeconds ? ` of ${c.budgetSeconds}s` : ""} — ${e(label(c.exitReason || c.status))}` : ""}${c.errorLines ? `<br>${e(c.errorLines)}` : ""}</small></div>${badge(c.status)}</div>`,
       )
       .join("") || '<p class="muted">No commands issued.</p>'
   );
@@ -494,7 +494,7 @@ function dashboard2d() {
   const running = data.runs.filter((r: Row) => r.status === "running").length;
   const connected = data.agents.filter((a: Row) => a.connection === "Connected").length;
   const waiting = pending();
-  return `${heading("BIS WORKSPACE", "Your workspace.", "The latest from your crew and the work in motion.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}<div class="dashboard-stats"><button class="dashboard-stat" data-action="nav" data-view="crew"><small>CONNECTED CREW</small><strong>${connected}<span> / ${data.agents.length}</span></strong><em>${data.agents.length - connected} offline</em></button><button class="dashboard-stat" data-action="nav" data-view="reviews"><small>NEEDS YOUR REVIEW</small><strong>${waiting.length}</strong><em>${waiting.length ? "Decisions waiting" : "All clear"}</em></button><button class="dashboard-stat" data-action="nav" data-view="activity"><small>RUNNING NOW</small><strong>${running}</strong><em>${data.work.filter((w: Row) => !["done", "canceled"].includes(w.status)).length} open missions</em></button><button class="dashboard-stat" data-action="nav" data-view="agenda"><small>ON TODAY'S AGENDA</small><strong>${data.queue.length}</strong><em>Scheduled and queued</em></button></div><div class="dashboard-grid"><section class="panel"><div class="section-title"><h2>Waiting on you</h2>${button("See all", "nav", 'data-view="reviews"', "text-button")}</div>${reviewCards(3)}</section><section class="panel"><div class="section-title"><h2>Today's agenda</h2>${button("View agenda", "nav", 'data-view="agenda"', "text-button")}</div>${data.queue.slice(0, 5).map((q: Row) => `<div class="queue-row"><span class="queue-time">${e(q.timeLabel || "ANYTIME")}</span><span>${e(q.text)}${q.group ? `<small class="queue-group">${e(q.group)}</small>` : ""}</span></div>`).join("") || '<p class="muted">Nothing queued. Add an item to keep the day moving.</p>'}</section><section class="panel"><div class="section-title"><h2>Active crew</h2>${button("All crew", "nav", 'data-view="crew"', "text-button")}</div><div class="dashboard-crew">${data.agents.filter((a: Row) => a.connection === "Connected").slice(0, 6).map((a: Row) => `<button class="dashboard-person" data-action="chat-agent" data-id="${e(a.id)}">${avatar(a)}<span><strong>${e(a.name)}</strong><small>${e(a.currentTask || a.role)}</small></span>${badge(a.operationalState || a.connection)}</button>`).join("") || '<p class="muted">No agents connected right now.</p>'}</div></section><section class="panel"><div class="section-title"><h2>Recent activity</h2>${button("Open audit trail", "nav", 'data-view="activity"', "text-button")}</div><div class="dashboard-timeline">${timeline(data.events.slice(0, 5))}</div></section></div>`;
+  return `${heading("BIS WORKSPACE", "Your workspace.", "The latest from your crew and the work in motion.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}${(data.usageAlerts || []).map((u: Row) => `<section class="panel spaced"><strong>Usage alert ? ${e(agent(u.agentId)?.name || u.agentId)}</strong><p>${u.today} dispatches today vs ${u.average.toFixed(1)} daily average over the prior week.</p></section>`).join("")}<div class="dashboard-stats"><button class="dashboard-stat" data-action="nav" data-view="crew"><small>CONNECTED CREW</small><strong>${connected}<span> / ${data.agents.length}</span></strong><em>${data.agents.length - connected} offline</em></button><button class="dashboard-stat" data-action="nav" data-view="reviews"><small>NEEDS YOUR REVIEW</small><strong>${waiting.length}</strong><em>${waiting.length ? "Decisions waiting" : "All clear"}</em></button><button class="dashboard-stat" data-action="nav" data-view="activity"><small>RUNNING NOW</small><strong>${running}</strong><em>${data.work.filter((w: Row) => !["done", "canceled"].includes(w.status)).length} open missions</em></button><button class="dashboard-stat" data-action="nav" data-view="agenda"><small>ON TODAY'S AGENDA</small><strong>${data.queue.length}</strong><em>Scheduled and queued</em></button></div><div class="dashboard-grid"><section class="panel"><div class="section-title"><h2>Waiting on you</h2>${button("See all", "nav", 'data-view="reviews"', "text-button")}</div>${reviewCards(3)}</section><section class="panel"><div class="section-title"><h2>Today's agenda</h2>${button("View agenda", "nav", 'data-view="agenda"', "text-button")}</div>${data.queue.slice(0, 5).map((q: Row) => `<div class="queue-row"><span class="queue-time">${e(q.timeLabel || "ANYTIME")}</span><span>${e(q.text)}${q.group ? `<small class="queue-group">${e(q.group)}</small>` : ""}</span></div>`).join("") || '<p class="muted">Nothing queued. Add an item to keep the day moving.</p>'}</section><section class="panel"><div class="section-title"><h2>Active crew</h2>${button("All crew", "nav", 'data-view="crew"', "text-button")}</div><div class="dashboard-crew">${data.agents.filter((a: Row) => a.connection === "Connected").slice(0, 6).map((a: Row) => `<button class="dashboard-person" data-action="chat-agent" data-id="${e(a.id)}">${avatar(a)}<span><strong>${e(a.name)}</strong><small>${e(a.currentTask || a.role)}</small></span>${badge(a.operationalState || a.connection)}</button>`).join("") || '<p class="muted">No agents connected right now.</p>'}</div></section><section class="panel"><div class="section-title"><h2>Recent activity</h2>${button("Open audit trail", "nav", 'data-view="activity"', "text-button")}</div><div class="dashboard-timeline">${timeline(data.events.slice(0, 5))}</div></section></div>`;
 }
 function updateChatPane(scroll = false) {
   if (view !== "office" && view !== "agent" && view !== "conversations") return;
@@ -1161,7 +1161,7 @@ document.addEventListener("click", async (ev) => {
       return;
     }
     if (action === "template-new") {
-      openForm("New dispatch template", "Save template", input("id", "Template ID") + input("name", "Name") + input("agentId", "First agent ID") + input("handoff", "Step handoff format") + input("completionCriteria", "Completion criteria") + input("maxLoops", "Maximum loops", "number"), async f => { await api("save_template", { id: f.get("id"), name: f.get("name"), steps: [{agentId:f.get("agentId"),handoff:f.get("handoff")}], completionCriteria:f.get("completionCriteria"), maxLoops:Number(f.get("maxLoops") || 1) }); await refresh(); await render(); });
+      openForm("New dispatch template", "Save template", input("id", "Template ID") + input("name", "Name") + '<label>Steps JSON<textarea name="steps" required>[{"agentId":"jeff","handoff":"Deliver the result for the next step"}]</textarea></label>' + input("completionCriteria", "Completion criteria") + input("maxLoops", "Maximum loops", "number"), async f => { let steps; try { steps = JSON.parse(String(f.get("steps"))); } catch { throw new Error("Steps must be valid JSON"); } await api("save_template", { id: f.get("id"), name: f.get("name"), steps, completionCriteria:f.get("completionCriteria"), maxLoops:Number(f.get("maxLoops") || 1) }); await refresh(); await render(); });
       return;
     }
     if (action === "reset-session") {
@@ -1537,8 +1537,15 @@ document.addEventListener("click", async (ev) => {
       return;
     }
     if (action === "stop") {
-      if (!data.config.stopped && !confirm("Pause the crew and let in-flight runs drain to completion or budget? New work will not start.")) return;
-      await act("global_stop", { stopped: !data.config.stopped, mode: "drain", exemptions: data.config.exemptions || [] });
+      let mode = data.config.stopMode || "drain";
+      if (!data.config.stopped) {
+        const choice = prompt("Pause mode: type drain or kill. Drain is the default.", "drain");
+        if (!choice) return;
+        mode = choice.trim().toLowerCase();
+        if (!["drain", "kill"].includes(mode)) { toast("Choose drain or kill.", true); return; }
+        if (!confirm(mode === "drain" ? "Pause new work and let in-flight runs finish or reach their budget?" : "Pause new work and terminate in-flight runs?")) return;
+      }
+      await act("global_stop", { stopped: !data.config.stopped, mode, exemptions: data.config.exemptions || [] });
       toast(
         data.config.stopped
           ? "New dispatch halted. Runtime stop acknowledgments appear in Live Ops."
@@ -1766,12 +1773,14 @@ document.addEventListener("click", async (ev) => {
             ["approved", "Approve"],
             ["rejected", "Request revision / reject"],
           ]) +
+          (a.artifact ? `<label>Edit artifact before approval<textarea name="artifact" maxlength="10000">${e(a.artifact)}</textarea></label>` : "") +
           '<label>Durable decision note<textarea name="note" required maxlength="2000"></textarea></label>',
         async (f) => {
           await api("resolve_approval", {
             id,
             decision: f.get("decision"),
             note: f.get("note"),
+            artifact: f.get("artifact"),
           });
         },
       );

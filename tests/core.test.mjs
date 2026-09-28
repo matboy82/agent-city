@@ -117,6 +117,59 @@ test("dispatch is idempotent and command/run/work states are distinct", () => {
   assert.throws(() => f.s.db.exec("DELETE FROM audit"), /immutable/);
   f.s.close();
 });
+test("workflow templates automatically dispatch each next step without manual redispatch", () => {
+  const f = fixture(), jev = f.pair("jev"), relay = f.pair("relay");
+  f.call("save_template",{id:"two_steps",name:"Two steps",steps:[{agentId:"jev",handoff:"Score lead"},{agentId:"relay",handoff:"Draft response"}],completionCriteria:"Draft complete",maxLoops:1});
+  const run = f.call("run_template", { templateId:"two_steps", title:"Triage lead", brief:"Review this inbound lead", goalId:"monthly" });
+  const first = f.s.list("command")[0];
+  assert.equal(first.agentId, "jev");
+  const accept = jev.act("ack_command", { command_id:first.id, status:"accepted" });
+  jev.act("ack_command", { command_id:first.id, status:"running", run_id:accept.runId });
+  jev.act("ack_command", { command_id:first.id, status:"completed", run_id:accept.runId, result:"Lead score 8/10" });
+  const next = f.s.list("command")[0];
+  assert.equal(next.agentId, "relay");
+  assert.equal(f.s.get("workflow", run.id).currentStep, 2);
+  assert.equal(f.s.get("work", run.workId).templateProgress[0].status, "completed");
+  const ack = relay.act("ack_command",{command_id:next.id,status:"accepted"});
+  relay.act("ack_command",{command_id:next.id,status:"running",run_id:ack.runId});
+  relay.act("ack_command",{command_id:next.id,status:"completed",run_id:ack.runId,result:"Draft ready"});
+  assert.equal(f.s.list("approval").some(a=>a.kind==="RESULT" && a.status==="waiting"),true);
+  f.call("resolve_approval",{id:f.s.list("approval").find(a=>a.kind==="RESULT").id,decision:"approved",note:"Approved"});
+  assert.equal(f.s.get("workflow",run.id).status,"completed");
+  f.s.close();
+});
+test("review loop sends reviewer feedback back to implementation until its loop limit", () => {
+  const f = fixture(), jev = f.pair("jev"), relay = f.pair("relay");
+  f.call("save_template", { id:"review_loop", name:"Review loop", steps:[{agentId:"jev",handoff:"Implement"},{agentId:"relay",handoff:"Review"}], completionCriteria:"Pass review", maxLoops:2 });
+  const workflow = f.call("run_template", { templateId:"review_loop", title:"Review me", brief:"Make a small change", goalId:"monthly" });
+  let command = f.s.list("command")[0];
+  const complete = (agent, c, result) => { const run = agent.act("ack_command",{command_id:c.id,status:"accepted"}); agent.act("ack_command",{command_id:c.id,status:"running",run_id:run.runId}); agent.act("ack_command",{command_id:c.id,status:"completed",run_id:run.runId,result}); };
+  complete(jev, command, "Implementation done");
+  command = f.s.list("command")[0];
+  complete(relay, command, "REVIEW: FAIL\nAdd the missing validation");
+  assert.equal(f.s.list("command")[0].agentId,"jev");
+  assert.equal(f.s.get("workflow",workflow.id).loopCount,2);
+  assert.match(f.s.get("work",workflow.workId).brief,/missing validation/);
+  command=f.s.list("command")[0];
+  complete(jev,command,"Implementation revised");
+  command=f.s.list("command")[0];
+  complete(relay,command,"REVIEW: FAIL\nStill failing");
+  assert.equal(f.s.get("workflow",workflow.id).status,"awaiting_approval");
+  assert.equal(f.s.list("command").some(c=>c.agentId==="jev" && c.id!==command.id),true);
+  f.s.close();
+});
+test("resetting a conversation session clears its runtime ID and stale hash warning", () => {
+  const f = fixture();
+  const conversation = f.call("start_agent_conversation", { agentId:"jeff" });
+  const message = f.call("send_agent_message", { agentId:"jeff", conversationId:conversation.id, body:"hello" });
+  f.jeff.act("reply_message", { id:message.id, body:"hello", runtimeSessionId:"session-old", instructionHash:"a".repeat(64) });
+  f.jeff.act("report_heartbeat", { agent_id:"jeff", runtime_id:"hermes-jeff", sequence:1, status:"idle", last_seen:new Date().toISOString(), capabilities:["work.execute"], instruction_hash:"b".repeat(64) });
+  assert.equal(f.call("get_dashboard").agents.find(a=>a.id==="jeff").staleSession, true);
+  f.call("reset_agent_session", { agentId:"jeff" });
+  assert.equal(f.s.get("conversation", conversation.id).runtimeSessionId, null);
+  assert.equal(f.s.events().some(e=>e.type==="agent.session_reset"), true);
+  f.s.close();
+});
 test("cannot skip acknowledgments, impersonate agent, or approve as agent", () => {
   const f = fixture(),
     relay = f.pair("relay"),

@@ -147,6 +147,7 @@ export class Core {
     }));
     const budgetEntries = this.s.list("budget_entry", 100000);
     const usage = this.usageSummary();
+    const usageAlerts = usage.flatMap(u => { const today = u.days[0]?.dispatches || 0; const average = u.days.slice(1, 8).reduce((n,d)=>n+d.dispatches,0) / 7; return average > 0 && today >= 3 * average ? [{ agentId:u.agentId, today, average }] : []; });
     return {
       agents,
       config: this.require("config", "bis"),
@@ -172,6 +173,7 @@ export class Core {
         .map((b) => ({ ...b, used: this.budgetUsed(b, budgetEntries) })),
       budgetEntries,
       usage,
+      usageAlerts,
       templates: this.s.list("template"),
       workflows: this.s.list("workflow"),
       events: this.s.events(),
@@ -196,6 +198,60 @@ export class Core {
       const commands = this.s.list("command", 100000).filter(c => c.agentId === a.id && c.verb === "work.start" && c.startedAt && days.includes(c.startedAt.slice(0, 10)));
       return { agentId: a.id, days: days.map(day => { const rows = commands.filter(c => c.startedAt.slice(0, 10) === day); return { day, dispatches: rows.length, runtimeSeconds: rows.reduce((n,c)=>n+(c.runtimeSeconds||0),0), tokens: rows.reduce((n,c)=>n+(c.tokens||0),0), budgetHits: rows.filter(c=>c.exitReason === "budget_exceeded").length }; }) };
     });
+  }
+  advanceTemplate(work, result) {
+    if (!work.templateId || !work.templateProgress) return false;
+    const workflow = this.s.list("workflow").find(x => x.workId === work.id);
+    if (!workflow || workflow.status !== "running") return false;
+    const template = this.require("template", work.templateId);
+    const current = workflow.currentStep || 1;
+    if (template.id === "review_loop" && current === template.steps.length) {
+      const passed = /^REVIEW:\s*PASS\b/im.test(result || "");
+      if (!passed && workflow.loopCount < template.maxLoops) {
+        workflow.loopCount++;
+        workflow.currentStep = 1;
+        work.raci.responsible = [template.steps[0].agentId];
+        work.brief = `${work.brief.slice(0, 1200)}\n\nReviewer feedback for revision ${workflow.loopCount}: ${(result || "Review did not report PASS").slice(0, 500)}`;
+        work.templateProgress = template.steps.map((step,index)=>({step:index+1,agentId:step.agentId,status:index===0?"dispatched":"queued"}));
+        work.status = "planned";
+        work.revision++;
+        this.s.put("work", work);
+        this.dispatch(work, work.raci.responsible[0], `workflow:${workflow.id}:${workflow.loopCount}:1`);
+        workflow.progress = structuredClone(work.templateProgress);
+        this.s.put("workflow", workflow);
+        return true;
+      }
+      workflow.progress[current - 1].status = passed ? "passed" : "loop_limit";
+      work.templateProgress[current - 1].status = passed ? "passed" : "loop_limit";
+      this.s.put("work", work);
+      workflow.status = "awaiting_approval";
+      this.s.put("workflow", workflow);
+      return false;
+    }
+    work.templateProgress[current - 1].status = "completed";
+    const next = template.steps[current];
+    if (!next) {
+      workflow.status = "awaiting_approval";
+      workflow.progress = structuredClone(work.templateProgress);
+      this.s.put("workflow", workflow);
+      return false;
+    }
+    workflow.currentStep = current + 1;
+    work.raci.responsible = [next.agentId];
+    work.brief = `${work.brief.slice(0, 1300)}\n\nStep ${current + 1}: ${next.handoff}${template.id === "review_loop" && current + 1 === 2 ? " Begin your result with REVIEW: PASS or REVIEW: FAIL, then state any required revision." : ""}\nPrevious result: ${(result || "").slice(0, 500)}`;
+    work.templateProgress[current].status = "dispatched";
+    work.status = "planned";
+    work.revision++;
+    this.s.put("work", work);
+    const paused = this.require("config", "bis").stopped && !(this.require("config", "bis").exemptions || []).includes(next.agentId);
+    if (paused) {
+      work.templateProgress[current].status = "queued";
+      workflow.status = "paused";
+      this.s.put("work", work);
+    } else this.dispatch(work, next.agentId, `workflow:${workflow.id}:${workflow.loopCount || 1}:${current + 1}`);
+    workflow.progress = structuredClone(work.templateProgress);
+    this.s.put("workflow", workflow);
+    return true;
   }
   enqueue(agentId, verb, workId, payload = {}, dedupe = id()) {
     const previous = this.s.commandByKey(dedupe);
@@ -536,6 +592,11 @@ export class Core {
           r.revision++;
           this.s.put("config", r);
           if (r.stopped && r.stopMode === "kill") for (const a of this.s.list("agent").filter((a) => a.lastSeen && !r.exemptions.includes(a.id))) this.enqueue(a.id, "agent.pause", null);
+          if (!r.stopped) for (const workflow of this.s.list("workflow").filter(x => x.status === "paused")) {
+            const work = this.require("work", workflow.workId);
+            const step = work.templateProgress[workflow.currentStep - 1];
+            if (step) { step.status = "dispatched"; work.status = "planned"; work.raci.responsible = [step.agentId]; this.s.put("work", work); this.dispatch(work, step.agentId, `workflow:${workflow.id}:${workflow.loopCount || 1}:${workflow.currentStep}`); workflow.status = "running"; workflow.progress = structuredClone(work.templateProgress); this.s.put("workflow", workflow); }
+          }
           break;
         }
         case "reset_agent_session": {
@@ -819,10 +880,12 @@ export class Core {
           }
           r.status = b.decision;
           r.resolution = z.string().trim().min(1).max(2000).parse(b.note);
+          if (typeof b.artifact === "string" && b.artifact.trim()) r.editedArtifact = z.string().trim().max(10000).parse(b.artifact);
           r.resolvedAt = now();
           this.s.put("approval", r);
-          if (r.status === "rejected" && r.requestedBy) {
-            const message = { id:id(), agentId:r.requestedBy, workId:r.workId || null, body:`Owner rejected “${r.title}”: ${r.resolution}`, scope:"private", status:"queued", author:"matt", createdAt:now() };
+          this.s.event("matt", "approval.resolved", r.id, { decision:r.status, note:r.resolution, tier:r.tier || null, workId:r.workId || null, artifactEdited:!!r.editedArtifact });
+          if (r.requestedBy) {
+            const message = { id:id(), agentId:r.requestedBy, workId:r.workId || null, body:`Owner ${r.status} “${r.title}”: ${r.resolution}`, scope:"private", status:"queued", author:"matt", createdAt:now() };
             this.s.put("message", message);
             this.enqueue(r.requestedBy, "message.deliver", r.workId || null, { messageId:message.id, body:message.body, runtimeSessionId:null });
           }
@@ -843,6 +906,59 @@ export class Core {
                   : "blocked";
               w.revision++;
               this.s.put("work", w);
+            }
+            if (r.kind === "RESULT" && r.status === "approved" && w.templateId) {
+              const workflow = this.s.list("workflow").find(x => x.workId === w.id);
+              const template = this.require("template", w.templateId);
+              const currentStep = workflow?.currentStep || 1;
+              if (w.templateProgress[currentStep - 1]) w.templateProgress[currentStep - 1].status = "approved";
+              const nextStep = template.steps[currentStep];
+              if (nextStep) {
+                const nextAgent = this.require("agent", nextStep.agentId);
+                w.raci.responsible = [nextAgent.id];
+                w.brief = `${w.brief.slice(0, 1500)}\n\nPrevious step result (${template.steps[currentStep - 1].agentId}): ${r.context.slice(0, 400)}`;
+                w.templateProgress[currentStep].status = "dispatched";
+                w.status = "planned";
+                w.revision++;
+                this.s.put("work", w);
+                workflow.currentStep = currentStep + 1;
+                const paused = this.require("config", "bis").stopped && !(this.require("config", "bis").exemptions || []).includes(nextAgent.id);
+                if (paused) { w.templateProgress[currentStep].status = "queued"; workflow.status = "paused"; this.s.put("work", w); }
+                else this.dispatch(w, nextAgent.id, `workflow:${workflow.id}:${workflow.loopCount || 1}:${currentStep + 1}`);
+                workflow.progress = structuredClone(w.templateProgress);
+                this.s.put("workflow", workflow);
+              } else if (workflow) {
+                workflow.status = "completed";
+                workflow.progress = structuredClone(w.templateProgress);
+                workflow.completedAt = now();
+                this.s.put("workflow", workflow);
+              }
+            }
+            if (r.kind === "RESULT" && r.status === "rejected" && w.templateId) {
+              const workflow = this.s.list("workflow").find(x => x.workId === w.id);
+              const template = this.require("template", w.templateId);
+              if (template.id === "review_loop" && workflow?.currentStep === template.steps.length && workflow.loopCount < template.maxLoops) {
+                const implementer = this.require("agent", template.steps[0].agentId);
+                workflow.loopCount++;
+                workflow.currentStep = 1;
+                workflow.status = "running";
+                w.raci.responsible = [implementer.id];
+                w.brief = `${w.brief.slice(0, 1300)}\n\nReviewer feedback for revision ${workflow.loopCount}: ${r.resolution.slice(0, 500)}`;
+                w.templateProgress = template.steps.map((step,index)=>({step:index+1,agentId:step.agentId,status:index===0?"dispatched":"queued"}));
+                w.status = "planned";
+                w.revision++;
+                this.s.put("work", w);
+                const paused = this.require("config", "bis").stopped && !(this.require("config", "bis").exemptions || []).includes(implementer.id);
+                if (paused) { w.templateProgress[0].status = "queued"; workflow.status = "paused"; this.s.put("work", w); }
+                else this.dispatch(w, implementer.id, `workflow:${workflow.id}:${workflow.loopCount}:1`);
+                workflow.progress = structuredClone(w.templateProgress);
+                this.s.put("workflow", workflow);
+              } else if (workflow) {
+                workflow.status = "failed";
+                workflow.progress = structuredClone(w.templateProgress);
+                workflow.completedAt = now();
+                this.s.put("workflow", workflow);
+              }
             }
           }
           break;
@@ -1381,17 +1497,20 @@ export class Core {
           this.require("goal", goalId);
           const title = z.string().trim().min(1).max(160).parse(b.title);
           const brief = z.string().trim().min(1).max(2000).parse(b.brief) + `\n\nWorkflow: ${template.name}. Completion: ${template.completionCriteria}. Steps: ${template.steps.map((s,i)=>`${i+1}. ${s.agentId}: ${s.handoff}`).join("; ")}. Maximum loops: ${template.maxLoops}.`;
-          const work = { id:id(), title, brief, priority:"normal", goalId, raci:{responsible:[agentId],accountable:"matt",consulted:[],informed:[]}, capability:"work.execute", scope:"bis", action:"read", status:"planned", revision:0, policyRevision:0, createdAt:now(), paused:false, templateId:template.id, templateProgress:template.steps.map((s,i)=>({step:i+1,agentId:s.agentId,status:"queued"})) };
+          const steps = structuredClone(template.steps);
+          steps[0].agentId = agentId;
+          const work = { id:id(), title, brief, priority:"normal", goalId, raci:{responsible:[agentId],accountable:"matt",consulted:[],informed:[]}, capability:"work.execute", scope:"bis", action:"read", status:"planned", revision:0, policyRevision:0, createdAt:now(), paused:false, templateId:template.id, templateProgress:steps.map((s,i)=>({step:i+1,agentId:s.agentId,status:i === 0 ? "dispatched" : "queued"})) };
           this.s.put("work",work);
-          r = {id:id(),templateId:template.id,workId:work.id,status:"running",progress:work.templateProgress,createdAt:now()};
+          r = {id:id(),templateId:template.id,workId:work.id,status:"running",currentStep:1,loopCount:1,progress:work.templateProgress,createdAt:now()};
           this.s.put("workflow",r);
+          this.dispatch(work, agentId, `workflow:${r.id}:1:1`);
           break;
         }
         default:
           throw new Fault("Unknown owner action", 404);
       }
       this.s.event("matt", action, r?.id || "bis", { revision: r?.revision });
-      return { ok: true, id: r?.id };
+      return { ok: true, id: r?.id, workId: r?.workId };
     });
   }
   claim(a, c) {
@@ -1501,9 +1620,17 @@ export class Core {
         failed: "blocked",
       }[b.status];
       w.revision++;
+      if (b.status === "running" && w.templateProgress) {
+        const workflow = this.s.list("workflow").find(x => x.workId === w.id);
+        const step = workflow && w.templateProgress[workflow.currentStep - 1];
+        if (step) { step.status = "running"; workflow.progress = structuredClone(w.templateProgress); this.s.put("work", w); this.s.put("workflow", workflow); }
+      }
       this.s.put("work", w);
+      if (b.status === "completed") { c.status = "completed"; c.updatedAt = now(); this.s.put("command", c); }
+      const templateAdvanced = b.status === "completed" ? this.advanceTemplate(w, run.result) : false;
       if (
         b.status === "completed" &&
+        !templateAdvanced &&
         !this.s
           .list("approval")
           .some(
@@ -1518,6 +1645,7 @@ export class Core {
           kind: "RESULT",
           workId: w.id,
           runId: run.id,
+          requestedBy: a.id,
           title: `Review: ${w.title}`,
           context:
             run.result ||
@@ -1785,6 +1913,7 @@ export class Core {
         requestedBy: a.id,
         artifact: typeof b.artifact === "string" ? z.string().max(10000).parse(b.artifact) : null,
         tier: typeof b.tier === "string" ? z.string().max(40).parse(b.tier) : null,
+        jevScore: typeof b.jevScore === "number" ? z.number().min(0).max(10).parse(b.jevScore) : null,
         expiresAt: typeof b.expiresAt === "string" ? z.string().datetime().parse(b.expiresAt) : null,
         title: z.string().min(1).max(160).parse(b.title),
         context: z.string().min(1).max(2000).parse(b.context),
@@ -1898,9 +2027,13 @@ export class Core {
           this.s.put("run", r);
           const c = this.require("command", r.commandId);
           c.status = "expired";
+          c.exitReason = "error";
+          c.runtimeSeconds = Math.max(0, Math.round((stamp() - Date.parse(c.startedAt || c.issuedAt)) / 1000));
+          c.errorLines = "Runtime lease expired before a verified completion";
           this.s.put("command", c);
           const w = this.require("work", r.workId);
           w.status = "blocked";
+          if (w.templateId) { const workflow = this.s.list("workflow").find(x => x.workId === w.id); if (workflow) { workflow.status = "failed"; workflow.error = "Runtime lease expired"; this.s.put("workflow", workflow); } }
           w.revision++;
           this.s.put("work", w);
           this.s.event("system", "run.expired", r.id, {
@@ -1910,6 +2043,9 @@ export class Core {
       for (const c of this.s.active("command"))
         if (!terminal.includes(c.status) && Date.parse(c.expiresAt) < stamp()) {
           c.status = "expired";
+          c.exitReason = "error";
+          c.runtimeSeconds = Math.max(0, Math.round((stamp() - Date.parse(c.startedAt || c.issuedAt)) / 1000));
+          c.errorLines ||= "Command expired before a verified completion";
           this.s.put("command", c);
           if (c.verb === "message.deliver") {
             const m = this.require("message", c.payload.messageId);
