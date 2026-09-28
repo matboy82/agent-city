@@ -90,3 +90,9 @@ Run the adapter where the Hermes CLI and its Jeff profile are installed. The app
 Stop commands are polled concurrently while work is running. The handler acknowledges after its owned Hermes process exits. It does not claim that independently detached tools or remote side effects have been rolled back. The adapter writes terminal results privately beside its execution ledger. A successful message turn is linked back as a private reply.
 
 The local executable's help was verified without starting a paid/model-backed task. Owner setup, pairing, and the first real mission are intentional application actions; no production passphrase or agent credential has been pre-created.
+
+## Work queue and office activity
+
+Hermes agents expose live office state in `crew-work-queue.json` at the root of their configured `CREW_HERMES_WORKSPACE`. The adapter reads it on each heartbeat; missing or invalid files report empty queue/activity and no current task. Keep the file current during substantive work and clear the task/set activity to `idle` when done. Jeff maintains this file in his BIS workspace. Use only supported activities: `typing`, `presenting`, `walking`, `reading`, `on_call`, `celebrating`, `idle`.
+
+Example: `{ "current_task": "Reviewing the operating plan", "current_activity": "reading", "queue": [{ "text": "Draft Q4 plan", "detail": "Prepare the first draft", "source_key": "q4-plan" }], "activity": [{ "summary": "Reviewed the planning brief", "time": "2026-09-27T14:00:00Z" }] }`. Queue and activity are capped at 20 entries; queue item keys are `text`, `detail`, `time`, `source_key`, while activity item keys are `summary`, `detail`, `time`, `source_key`.

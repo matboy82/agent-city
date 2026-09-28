@@ -52,6 +52,9 @@ export class Adapter {
     status = "idle",
     task = null,
     runId = null,
+    queue = [],
+    activity = [],
+    current_activity = null,
     capabilities = ["work.execute"],
     officeDesign,
     instructionHash,
@@ -68,11 +71,11 @@ export class Adapter {
       current_task: task,
       current_run_id: runId,
       capabilities,
+      queue: queue.slice(0, 20),
+      activity: activity.slice(0, 20),
       ...(instructionHash ? { instruction_hash: instructionHash } : {}),
       ...(officeDesign ? { office_design: officeDesign } : {}),
-      ...(process.env.CREW_ACTIVITY
-        ? { current_activity: process.env.CREW_ACTIVITY }
-        : {}),
+      ...(current_activity ? { current_activity } : {}),
     });
   }
   async ack(command, status, runId, result, metadata = {}) {
@@ -223,7 +226,15 @@ if (
     const inflight = new Map();
     while (true) {
       try {
-        await adapter.heartbeat({ status: process.env.CREW_STATUS || (inflight.size ? "active" : "idle"), instructionHash: typeof getInstructionHash === "function" ? await getInstructionHash() : undefined });
+        const probe = await handler({ verb: "status.probe" }, { adapter });
+        await adapter.heartbeat({
+          status: process.env.CREW_STATUS || (inflight.size ? "active" : "idle"),
+          task: probe?.current_task || null,
+          queue: probe?.queue || [],
+          activity: probe?.activity || [],
+          current_activity: probe?.current_activity || null,
+          instructionHash: typeof getInstructionHash === "function" ? await getInstructionHash() : undefined,
+        });
         const commands = await adapter.call("poll_commands");
         for (const command of commands) {
           if (inflight.has(command.id)) continue;

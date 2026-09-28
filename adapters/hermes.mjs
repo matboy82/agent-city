@@ -26,7 +26,27 @@ export async function resolveHermesWorkspace(path) {
   }
   return workspace;
 }
+const validActivities = new Set(["typing", "presenting", "walking", "reading", "on_call", "celebrating", "idle"]);
+export async function probeWorkQueue(workspacePath) {
+  const empty = { queue: [], activity: [], current_task: null, current_activity: null };
+  try {
+    const workspace = workspacePath ? await resolveHermesWorkspace(workspacePath) : await realpath(process.cwd());
+    const data = JSON.parse(await readFile(join(workspace, "crew-work-queue.json"), "utf8"));
+    const queue = Array.isArray(data.queue) ? data.queue.slice(0, 20) : [];
+    const activity = Array.isArray(data.activity) ? data.activity.slice(0, 20) : [];
+    return {
+      queue: queue.filter((item) => item && typeof item.text === "string").map(({ text, detail, time, source_key }) => ({ text: text.slice(0, 240), ...(typeof detail === "string" ? { detail: detail.slice(0, 500) } : {}), ...(typeof time === "string" ? { time: time.slice(0, 80) } : {}), ...(typeof source_key === "string" ? { source_key: source_key.slice(0, 180) } : {}) })),
+      activity: activity.filter((item) => item && typeof item.summary === "string").map(({ summary, detail, time, source_key }) => ({ summary: summary.slice(0, 240), ...(typeof detail === "string" ? { detail: detail.slice(0, 800) } : {}), ...(typeof time === "string" ? { time: time.slice(0, 80) } : {}), ...(typeof source_key === "string" ? { source_key: source_key.slice(0, 180) } : {}) })),
+      current_task: typeof data.current_task === "string" ? data.current_task.slice(0, 240) : null,
+      current_activity: validActivities.has(data.current_activity) ? data.current_activity : null,
+    };
+  } catch {
+    return empty;
+  }
+}
 export async function handle(command, { adapter, shouldStop }) {
+  if (command.verb === "status.probe")
+    return probeWorkQueue(process.env.CREW_HERMES_WORKSPACE);
   if (["agent.pause", "work.pause", "work.cancel"].includes(command.verb)) {
     const children = [...running.values()].filter(
       (r) => !command.workId || r.workId === command.workId,
