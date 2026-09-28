@@ -16,6 +16,11 @@ const profilePortraits = new Set(["angela", "arthur", "calvin", "chad", "irene",
 const previewDesigns = new Map<string, Row>();
 const chatSelection = new Map<string, string>();
 let navCollapsed = localStorage.getItem("crew.navCollapsed") === "true";
+const mobileQuery = matchMedia("(max-width: 700px)");
+let mobile = mobileQuery.matches;
+let mode = localStorage.getItem("crew.mode") || (flat ? "2d" : "3d");
+if (mobile) mode = "2d";
+let chatAgent = "";
 let activityFilter = localStorage.getItem("crew.activityFilter") || "all";
 let briefDockOpen = localStorage.getItem("crew.briefDock") === "true";
 let officeEditing = false;
@@ -478,6 +483,19 @@ function chatMarkup(agentId: string) {
   const active = agent(agentId)?.connection === "Connected";
   return `<div class="chat-header"><label>Session<select id="chat-session">${conversations.map((c: Row, index: number) => `<option value="${e(c.id)}" ${c.id === conversation ? "selected" : ""}>${index === 0 ? "Latest" : "Earlier"} · ${time(c.createdAt)}</option>`).join("")}${hasLegacy || !conversations.length ? `<option value="legacy" ${conversation === "legacy" ? "selected" : ""}>Earlier notes</option>` : ""}</select></label>${button("New session", "new-chat-session")}</div><div class="messages" id="chat-messages" role="log" aria-label="Conversation with ${e(agent(agentId)?.name)}">${chatMessages(agentId, conversation)}</div><div class="chat-presence" id="chat-presence" aria-live="polite">${pending ? `<span class="typing-dots"><i></i><i></i><i></i></span>${active ? agent(agentId)?.activity === "typing" ? "Typing a reply" : "Working on your reply" : "Waiting for agent connection"}` : active ? "Connected · ready to chat" : "Offline · messages queue until connected"}</div>`;
 }
+function conversationsPage() {
+  const agents = data.agents.slice().reverse();
+  const active = agent(chatAgent) || agents[0];
+  if (!active) return empty("No agents yet", "Register a crew member to start a conversation.");
+  const unread = (id: string) => data.messages.filter((m: Row) => m.agentId === id && m.scope === "private" && m.reply).length;
+  return `${heading("CREW MESSAGING", "Conversations", "Pick a teammate and continue a private conversation.")}<div class="inbox-layout"><nav class="inbox-agents" aria-label="Conversations">${agents.map((a: Row) => `<button class="inbox-agent ${a.id === active.id ? "active" : ""}" data-action="chat-agent" data-id="${e(a.id)}">${avatar(a)}<span><strong>${e(a.name)}</strong><small>${e(a.currentTask || a.role)}</small></span>${unread(a.id) ? `<b>${unread(a.id)}</b>` : ""}</button>`).join("")}</nav><section class="panel conversation inbox-thread"><div class="section-title"><div class="row">${avatar(active)}<div><h2>${e(active.name)}</h2><small>${e(active.role)} · ${e(active.connection)}</small></div></div><span class="eyebrow">PRIVATE</span></div><div id="chat-pane">${chatMarkup(active.id)}</div><form id="message-form"><label class="sr-only" for="message-body">Message ${e(active.name)}</label><textarea id="message-body" name="body" placeholder="Message ${e(active.name)}…" required maxlength="4000"></textarea><div class="chat-compose-actions"><small>Enter to send · Shift+Enter for a new line</small><button class="primary" type="submit">Send ${icon("arrow")}</button></div></form></section></div>`;
+}
+function dashboard2d() {
+  const running = data.runs.filter((r: Row) => r.status === "running").length;
+  const connected = data.agents.filter((a: Row) => a.connection === "Connected").length;
+  const waiting = pending();
+  return `${heading("BIS WORKSPACE", "Your workspace.", "The latest from your crew and the work in motion.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}<div class="dashboard-stats"><button class="dashboard-stat" data-action="nav" data-view="crew"><small>CONNECTED CREW</small><strong>${connected}<span> / ${data.agents.length}</span></strong><em>${data.agents.length - connected} offline</em></button><button class="dashboard-stat" data-action="nav" data-view="reviews"><small>NEEDS YOUR REVIEW</small><strong>${waiting.length}</strong><em>${waiting.length ? "Decisions waiting" : "All clear"}</em></button><button class="dashboard-stat" data-action="nav" data-view="activity"><small>RUNNING NOW</small><strong>${running}</strong><em>${data.work.filter((w: Row) => !["done", "canceled"].includes(w.status)).length} open missions</em></button><button class="dashboard-stat" data-action="nav" data-view="agenda"><small>ON TODAY'S AGENDA</small><strong>${data.queue.length}</strong><em>Scheduled and queued</em></button></div><div class="dashboard-grid"><section class="panel"><div class="section-title"><h2>Waiting on you</h2>${button("See all", "nav", 'data-view="reviews"', "text-button")}</div>${reviewCards(3)}</section><section class="panel"><div class="section-title"><h2>Today's agenda</h2>${button("View agenda", "nav", 'data-view="agenda"', "text-button")}</div>${data.queue.slice(0, 5).map((q: Row) => `<div class="queue-row"><span class="queue-time">${e(q.timeLabel || "ANYTIME")}</span><span>${e(q.text)}${q.group ? `<small class="queue-group">${e(q.group)}</small>` : ""}</span></div>`).join("") || '<p class="muted">Nothing queued. Add an item to keep the day moving.</p>'}</section><section class="panel"><div class="section-title"><h2>Active crew</h2>${button("All crew", "nav", 'data-view="crew"', "text-button")}</div><div class="dashboard-crew">${data.agents.filter((a: Row) => a.connection === "Connected").slice(0, 6).map((a: Row) => `<button class="dashboard-person" data-action="chat-agent" data-id="${e(a.id)}">${avatar(a)}<span><strong>${e(a.name)}</strong><small>${e(a.currentTask || a.role)}</small></span>${badge(a.operationalState || a.connection)}</button>`).join("") || '<p class="muted">No agents connected right now.</p>'}</div></section><section class="panel"><div class="section-title"><h2>Recent activity</h2>${button("Open audit trail", "nav", 'data-view="activity"', "text-button")}</div><div class="dashboard-timeline">${timeline(data.events.slice(0, 5))}</div></section></div>`;
+}
 function updateChatPane(scroll = false) {
   if (view !== "office" && view !== "agent") return;
   const pane = document.querySelector<HTMLElement>("#chat-pane");
@@ -662,6 +680,11 @@ function project() {
 }
 
 async function render(preserveWorld = false) {
+  mobile = mobileQuery.matches;
+  if (mobile) {
+    mode = "2d";
+    if (["city", "hq", "office", "project", "agent"].includes(view)) view = "dashboard";
+  }
   if (view !== "office") officeEditing = false;
   if (view !== "city") cityEditing = false;
   const version = ++renderVersion;
@@ -680,21 +703,21 @@ async function render(preserveWorld = false) {
   document.body.classList.toggle("reduced", reduced);
   localStorage.setItem(
     "crew.view",
-    ["office", "project", "agent"].includes(view) ? "city" : view,
+    ["office", "project", "agent"].includes(view) ? (mobile ? "dashboard" : "city") : view,
   );
   document.body.classList.toggle("nav-collapsed", navCollapsed);
   if (!["city", "office", "hq"].includes(view)) await setExpanded(false, false);
-  app.innerHTML = `<div class="shell"><aside class="sidebar"><a class="brand" href="#" data-action="nav" data-view="city"><span class="brand-mark">C<span>•</span></span><span>crew<span class="brand-light">os</span><small>BIS WORKSPACE</small></span></a><div class="sidebar-caption">WORKSPACE</div><nav aria-label="Main navigation">${[
-    ["city", "The city"],
-    ["hq", "BIS HQ"],
+  app.innerHTML = `<div class="shell ${mobile ? "mobile-workspace" : ""} ${mode === "2d" ? "two-d-mode" : "three-d-mode"}"><aside class="sidebar"><a class="brand" href="#" data-action="nav" data-view="${mobile || mode === "2d" ? "dashboard" : "city"}"><span class="brand-mark">C<span>•</span></span><span>crew<span class="brand-light">os</span><small>BIS WORKSPACE</small></span></a><div class="sidebar-caption">WORKSPACE</div><nav aria-label="Main navigation">${[
+    ["dashboard", "Overview"],
+    ["conversations", "Chat"],
     ["crew", "Your crew"],
     ["activity", "Activity"],
   ]
     .map(([id, title]) =>
       button(
-        icon(id) +
+        icon(id === "dashboard" ? "activity" : id === "conversations" ? "crew" : id) +
           `<span>${title}</span>` +
-          (id === "hq" && pending().length ? `<b>${pending().length}</b>` : ""),
+          (id === "reviews" && pending().length ? `<b>${pending().length}</b>` : ""),
         "nav",
         `data-view="${id}" title="${title}" aria-label="${title}" aria-current="${view === id ? "page" : "false"}"`,
         view === id ? "nav-link active" : "nav-link",
@@ -719,7 +742,7 @@ async function render(preserveWorld = false) {
     )
     .join(
       "",
-    )}</nav></div><div class="sidebar-bottom"><div class="workspace-health"><span class="health-dot"></span><div>All work, one place.<small>${data.agents.filter((a: Row) => a.connection === "Connected").length} of ${data.agents.length} agents connected</small></div></div>${button(icon("settings") + "<span>Settings & credits</span>", "nav", 'data-view="settings" aria-label="Settings and credits" title="Settings and credits"', view === "settings" ? "nav-link active" : "nav-link")}<div class="owner"><span class="owner-avatar">M</span><div><strong>Matt</strong><small>Workspace owner</small></div>${button("?", "logout", 'aria-label="Sign out"', "icon-button")}</div></div></aside><div class="main-shell"><header class="topbar">${button(icon("nav"), "toggle-nav", `aria-label="${navCollapsed ? "Expand" : "Collapse"} navigation" aria-expanded="${!navCollapsed}"`, "icon-button nav-toggle")}<div class="breadcrumb">BIS <span>/</span> ${e(view === "office" ? agent(selected)?.name : view === "hq" ? "Headquarters" : label(view))}</div><div class="topbar-right">${button(icon("settings"), "nav", 'data-view="settings" aria-label="Settings and credits"', "mobile-settings icon-button")}<span class="timezone">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", hour: "numeric", minute: "2-digit" }).format(new Date())} <small>DENVER</small></span>${button(icon("pause") + (data.config.stopped ? " Dispatch stopped" : " Stop dispatch"), "stop", "", data.config.stopped ? "stop-button stopped" : "stop-button")}</div></header><main>${view === "city" ? city() : view === "hq" ? hq() : view === "office" ? office() : view === "agent" ? office(true) : ["brief", "agenda", "reviews", "goals"].includes(view) ? focusedPage() : view === "crew" ? crew() : view === "settings" ? settings() : view === "project" ? project() : heading("AUDIT TRAIL", "Every action has a history.", "Immutable records from the owner, agents, and scheduler.") + '<section class="panel"><label class="search-field">' + icon("search") + '<input id="event-search" placeholder="Search event, actor, or entity…" aria-label="Search activity"></label><div id="event-results">' + timeline() + "</div></section>"}</main><footer>BIS / CREW OS <span>Built for real work. Made to feel alive.</span><span>America/Denver</span></footer></div></div>`;
+    )}</nav></div><div class="sidebar-bottom"><div class="workspace-health"><span class="health-dot"></span><div>All work, one place.<small>${data.agents.filter((a: Row) => a.connection === "Connected").length} of ${data.agents.length} agents connected</small></div></div>${button(icon("settings") + "<span>Settings</span>", "nav", 'data-view="settings" aria-label="Settings and credits" title="Settings and credits"', view === "settings" ? "nav-link active" : "nav-link")}<div class="owner"><span class="owner-avatar">M</span><div><strong>Matt</strong><small>Workspace owner</small></div>${button("?", "logout", 'aria-label="Sign out"', "icon-button")}</div></div></aside><div class="main-shell"><header class="topbar">${button(icon("nav"), "toggle-nav", `aria-label="${navCollapsed ? "Expand" : "Collapse"} navigation" aria-expanded="${!navCollapsed}"`, "icon-button nav-toggle")}<div class="breadcrumb">BIS <span>/</span> ${e(view === "office" ? agent(selected)?.name : view === "hq" ? "Headquarters" : view === "dashboard" ? "Overview" : label(view))}</div><div class="topbar-right">${button(icon("settings"), "nav", 'data-view="settings" aria-label="Settings and credits"', "mobile-settings icon-button")}<span class="timezone">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", hour: "numeric", minute: "2-digit" }).format(new Date())} <small>DENVER</small></span>${!mobile ? button(mode === "2d" ? "3D City" : "2D Workspace", "mode", "", "mode-toggle") : ""}${button(icon("pause") + (data.config.stopped ? " Dispatch stopped" : " Stop dispatch"), "stop", "", data.config.stopped ? "stop-button stopped" : "stop-button")}</div></header><main>${view === "dashboard" ? dashboard2d() : view === "conversations" ? conversationsPage() : view === "city" ? city() : view === "hq" ? hq() : view === "office" ? office() : view === "agent" ? office(true) : ["brief", "agenda", "reviews", "goals"].includes(view) ? focusedPage() : view === "crew" ? crew() : view === "settings" ? settings() : view === "project" ? project() : heading("AUDIT TRAIL", "Every action has a history.", "Immutable records from the owner, agents, and scheduler.") + '<section class="panel"><label class="search-field">' + icon("search") + '<input id="event-search" placeholder="Search event, actor, or entity…" aria-label="Search activity"></label><div id="event-results">' + timeline() + "</div></section>"}</main><footer>BIS / CREW OS <span>Built for real work. Made to feel alive.</span><span>America/Denver</span></footer></div></div>`;
   if (retainedStage)
     document.querySelector(".world-stage")?.replaceWith(retainedStage);
   if (view === "activity") {
@@ -1410,10 +1433,12 @@ document.addEventListener("click", async (ev) => {
     }
     if (action === "nav") {
       view = target.dataset.view!;
+      if (view === "conversations" && !chatAgent) chatAgent = data.agents[0]?.id || "";
       await render();
       return;
     }
     if (action === "office") {
+      if (mobile || mode === "2d") { chatAgent = id!; selected = id!; view = "conversations"; await render(); return; }
       selected = id!;
       view = "office";
       await render();
@@ -1440,6 +1465,22 @@ document.addEventListener("click", async (ev) => {
     if (action === "flat") {
       flat = !flat;
       localStorage.setItem("crew.flat", String(flat));
+      await render();
+      return;
+    }
+    if (action === "mode") {
+      mode = mode === "2d" ? "3d" : "2d";
+      flat = mode === "2d";
+      localStorage.setItem("crew.mode", mode);
+      localStorage.setItem("crew.flat", String(flat));
+      view = mode === "2d" ? "dashboard" : "city";
+      await render();
+      return;
+    }
+    if (action === "chat-agent") {
+      chatAgent = target.dataset.id || "";
+      selected = chatAgent;
+      view = "conversations";
       await render();
       return;
     }
@@ -2163,18 +2204,19 @@ document.addEventListener("submit", (ev) => {
   if (!body) return;
   const send = f.querySelector<HTMLButtonElement>("button[type=submit]")!;
   send.disabled = true;
+  const recipient = view === "conversations" ? chatAgent : selected;
   void (async () => {
     try {
-      let conversation = conversationId(selected);
+      let conversation = conversationId(recipient);
       if (conversation === "legacy") {
-        const created = await api("start_agent_conversation", { agentId: selected });
+        const created = await api("start_agent_conversation", { agentId: recipient });
         conversation = created.id;
-        chatSelection.set(selected, conversation);
+        chatSelection.set(recipient, conversation);
       }
-      await api("send_agent_message", { agentId: selected, conversationId: conversation, body });
+      await api("send_agent_message", { agentId: recipient, conversationId: conversation, body });
       f.reset();
       await refresh();
-      updateChatPane(true);
+      if (view === "conversations") await render(); else updateChatPane(true);
     } catch (err) {
       send.disabled = false;
       toast((err as Error).message, true);
@@ -2186,6 +2228,7 @@ document.addEventListener("change", (ev) => {
   chatSelection.set(selected, (ev.target as HTMLSelectElement).value);
   updateChatPane(true);
 });
+mobileQuery.addEventListener("change", () => { mobile = mobileQuery.matches; void render(); });
 let searchTimeout: ReturnType<typeof setTimeout>;
 document.addEventListener("input", (ev) => {
   if ((ev.target as HTMLElement).id === "event-search") {
