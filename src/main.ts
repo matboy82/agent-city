@@ -82,6 +82,24 @@ const time = (v: string) =>
         minute: "2-digit",
       }).format(new Date(v))
     : "Never connected";
+const WORK_STALE_MS = 15 * 60 * 1000;
+const ACTIVITY_LABELS: Record<string, string> = {
+  typing: "Working at desk",
+  presenting: "Presenting",
+  walking: "Walking",
+  reading: "Reading",
+  on_call: "On a call",
+  celebrating: "Celebrating",
+  idle: "Idle",
+};
+function relativeTime(v: string) {
+  const elapsed = Math.max(0, Date.now() - Date.parse(v));
+  if (!Number.isFinite(elapsed)) return "time unavailable";
+  if (elapsed < 60_000) return "just now";
+  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} min ago`;
+  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} hr ago`;
+  return `${Math.floor(elapsed / 86_400_000)} days ago`;
+}
 const badge = (v: string) =>
   `<span class="badge ${["active", "Connected", "done", "completed", "approved"].includes(v) ? "good" : ["failed", "blocked", "rejected", "expired"].includes(v) ? "bad" : ["waiting_approval", "waiting_on_matt", "queued", "Stale"].includes(v) ? "warn" : ""}"><i></i>${e(label(v))}</span>`;
 const button = (text: string, action: string, extra = "", cls = "") =>
@@ -164,6 +182,7 @@ function sceneKey() {
       a?.officePositions,
       a?.designSource,
       a?.revision,
+      ACTIVITY_LABELS[a?.activity] || "Idle",
     ]);
   }
   if (view === "city")
@@ -587,7 +606,12 @@ function office(details = false) {
     ),
   );
   const building = data.buildings.find((b: Row) => b.agentId === a.id);
-  return `${button("← Back to city", "nav", 'data-view="city"', "text-button back")}${heading(a.role, details ? `${e(a.name)} - details` : `${e(a.name)}’s office`, a.currentTask || "No task reported. This space is ready when they are.", (details ? button("Enter office", "office", `data-id="${e(a.id)}"`) : "") + button("Design office", "design", `data-id="${e(a.id)}"`) + (building ? button("Edit building", "building-edit", `data-id="${e(building.id)}"`) : "") + button("Connection", "connect", `data-id="${e(a.id)}"`, "primary"))}<div class="office-layout ${details ? "detail-layout" : ""}">${details ? "" : `<section class="world-card office-world ${officeEditing ? "office-editing" : ""}"><div class="world-title"><div class="row">${avatar(a)}<div><h2>${e(a.name)}</h2><div class="office-name-actions">${button("? " + (officeEditing ? "Stop editing positions" : "Edit positions"), "toggle-office-edit", `aria-pressed="${officeEditing}"`)}</div>${badge(a.connection)}</div></div><span class="eyebrow">${e(label(a.effectiveDesign.theme))}</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Agent office; operational controls are below"></canvas><div id="world-loading" class="world-loading">Preparing office…</div></div>${officeEditing ? officePositionEditor(a) : ""}<div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D office" : "2D view", "flat")}<span>${e(a.designSource)} · revision ${a.revision}</span></div></section>`}<section class="panel conversation"><div class="section-title"><h2>Direct conversation</h2><span class="eyebrow">PRIVATE</span></div><div id="chat-pane">${chatMarkup(a.id)}</div><form id="message-form"><label class="sr-only" for="message-body">Message ${e(a.name)}</label><textarea id="message-body" name="body" placeholder="Message ${e(a.name)}…" required maxlength="4000"></textarea><div class="chat-compose-actions"><small>Enter to send · Shift+Enter for a new line</small><button class="primary" type="submit">Send message ${icon("arrow")}</button></div></form></section></div><div class="lower-grid"><section class="panel"><h2>Assigned work</h2>${work.map(workCard).join("") || '<p class="muted">No assigned missions.</p>'}</section><section class="panel"><h2>Runtime & boundaries</h2><dl><dt>Connection</dt><dd>${e(a.connection)}</dd><dt>Last heartbeat</dt><dd>${time(a.lastSeen)}</dd><dt>Runtime</dt><dd>${e(a.runtimeId || "Not paired")}</dd><dt>Sequence</dt><dd>${a.sequence >= 0 ? a.sequence : "—"}</dd><dt>Capabilities</dt><dd>${e(a.capabilities.join(", ") || "Not advertised")}</dd><dt>Data boundary</dt><dd>BIS only</dd></dl><h3>Evidence</h3>${artifacts(data.artifacts.filter((x: Row) => x.agentId === a.id))}</section></div>`;
+  const heartbeatAt = a.observedAt || a.lastSeen;
+  const stale = !heartbeatAt || Date.now() - Date.parse(heartbeatAt) > WORK_STALE_MS;
+  const queue = Array.isArray(a.workQueue) ? a.workQueue.slice(0, 20) : [];
+  const activity = Array.isArray(a.workActivity) ? a.workActivity.slice(0, 20) : [];
+  const workDisplay = `<div class="crew-live-work ${stale ? "is-stale" : ""}" aria-label="${stale ? "Work data is stale" : "Live work data"}"><section class="panel live-work-panel"><div class="section-title"><h2>Assigned work</h2><span class="eyebrow">${stale ? "STALE" : "LIVE"}</span></div>${stale ? `<p class="work-updated">Last updated ${heartbeatAt ? e(relativeTime(heartbeatAt)) : "never"}</p>` : ""}<div class="current-task"><small>NOW WORKING ON</small><strong>${e(a.currentTask || "Idle — ready for the next assignment")}</strong></div><div class="work-list">${queue.map((item: Row) => `<article class="work-item"><strong>${e(item.text)}</strong>${item.detail ? `<p>${e(item.detail)}</p>` : ""}${item.time ? `<small>${e(time(item.time))}</small>` : ""}</article>`).join("") || '<p class="muted">No assigned work</p>'}</div></section><section class="panel live-activity-panel"><div class="section-title"><h2>Recent activity</h2></div>${activity.length ? `<ol class="live-activity-list">${activity.map((item: Row) => `<li><strong>${e(item.summary)}</strong>${item.time ? `<small>${e(time(item.time))}</small>` : ""}${item.detail ? `<details><summary>Details</summary><p>${e(item.detail)}</p></details>` : ""}</li>`).join("")}</ol>` : '<p class="muted">No recent activity</p>'}</section></div>`;
+  return `${button("← Back to city", "nav", 'data-view="city"', "text-button back")}${heading(a.role, details ? `${e(a.name)} - details` : `${e(a.name)}’s office`, a.currentTask || "No task reported. This space is ready when they are.", (details ? button("Enter office", "office", `data-id="${e(a.id)}"`) : "") + button("Design office", "design", `data-id="${e(a.id)}"`) + (building ? button("Edit building", "building-edit", `data-id="${e(building.id)}"`) : "") + button("Connection", "connect", `data-id="${e(a.id)}"`, "primary"))}<div class="office-layout ${details ? "detail-layout" : ""}">${details ? "" : `<section class="world-card office-world ${officeEditing ? "office-editing" : ""}"><div class="world-title"><div class="row">${avatar(a)}<div><h2>${e(a.name)}</h2><small class="office-activity">${e(ACTIVITY_LABELS[a.activity] || "Idle")}</small><div class="office-name-actions">${button("? " + (officeEditing ? "Stop editing positions" : "Edit positions"), "toggle-office-edit", `aria-pressed="${officeEditing}"`)}</div>${badge(a.connection)}</div></div><span class="eyebrow">${e(label(a.effectiveDesign.theme))}</span></div><div class="world-stage" id="world-stage"><canvas id="world" aria-label="Agent office; operational controls are below"></canvas><div id="world-loading" class="world-loading">Preparing office…</div></div>${officeEditing ? officePositionEditor(a) : ""}<div class="world-tools">${button(icon("sun") + (dusk ? " Day" : " Dusk"), "dusk")}${button(flat ? "3D office" : "2D view", "flat")}<span>${e(a.designSource)} · revision ${a.revision}</span></div></section>`}<section class="panel conversation"><div class="section-title"><h2>Direct conversation</h2><span class="eyebrow">PRIVATE</span></div><div id="chat-pane">${chatMarkup(a.id)}</div><form id="message-form"><label class="sr-only" for="message-body">Message ${e(a.name)}</label><textarea id="message-body" name="body" placeholder="Message ${e(a.name)}…" required maxlength="4000"></textarea><div class="chat-compose-actions"><small>Enter to send · Shift+Enter for a new line</small><button class="primary" type="submit">Send message ${icon("arrow")}</button></div></form></section></div>${workDisplay}<div class="crew-office-bottom"><section class="panel"><h2>Assigned missions</h2>${work.map(workCard).join("") || '<p class="muted">No assigned missions.</p>'}</section><section class="panel runtime-boundaries"><h2>Runtime & boundaries</h2><dl><dt>Connection</dt><dd>${e(a.connection)}</dd><dt>Last heartbeat</dt><dd>${time(a.lastSeen)}</dd><dt>Runtime</dt><dd>${e(a.runtimeId || "Not paired")}</dd><dt>Sequence</dt><dd>${a.sequence >= 0 ? a.sequence : "—"}</dd><dt>Capabilities</dt><dd>${e(a.capabilities.join(", ") || "Not advertised")}</dd><dt>Data boundary</dt><dd>BIS only</dd></dl><h3>Evidence</h3>${artifacts(data.artifacts.filter((x: Row) => x.agentId === a.id))}</section></div>`;
 }
 function crew() {
   return `${heading("PEOPLE & RUNTIMES", "Meet your crew.", "Distinct identities. Shared direction. Honest connection states.", button("Register building", "building-new"))}<div class="crew-grid">${data.agents

@@ -70,6 +70,28 @@ test("owner auth, setup single use, private snapshot and logout", () => {
   assert.throws(() => f.call("get_dashboard"), /Sign in/);
   f.s.close();
 });
+test("heartbeat work queue and activity are exposed on the agent snapshot", () => {
+  const f = fixture();
+  f.jeff.act("report_heartbeat", {
+    agent_id: "jeff",
+    runtime_id: "hermes-jeff",
+    sequence: 1,
+    status: "active",
+    last_seen: new Date().toISOString(),
+    current_task: "Drafting a proposal",
+    current_activity: "typing",
+    activity: [{ summary: "Started proposal", detail: "For Friday review", time: new Date().toISOString(), source_key: "activity-1" }],
+    queue: [{ text: "Review Q4 plan", detail: "Check numbers", time: "2026-09-30T09:00:00Z", source_key: "queue-1" }],
+  });
+  const agent = f.call("get_dashboard").agents.find((a) => a.id === "jeff");
+  assert.equal(agent.currentTask, "Drafting a proposal");
+  assert.equal(agent.activity, "typing");
+  assert.equal(agent.workQueue[0].text, "Review Q4 plan");
+  assert.equal(agent.workQueue[0].time, "2026-09-30T09:00:00Z");
+  assert.equal(agent.workActivity[0].summary, "Started proposal");
+  assert.equal(agent.workActivity[0].detail, "For Friday review");
+  f.s.close();
+});
 test("dispatch is idempotent and command/run/work states are distinct", () => {
   const f = fixture(),
     w = f.create(),

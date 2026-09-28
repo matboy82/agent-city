@@ -728,6 +728,9 @@ export async function mountWorld(
   >();
   let officeAvatar: TransformNode | null = null;
   let officeMode = agent ? resolveActivity(agent, data.runs) : "idle";
+  let pendingOfficeMode = officeMode;
+  let pendingOfficeModeHeartbeats = 0;
+  let lastOfficeSequence = agent?.sequence;
   let officeLive = agent?.connection === "Connected";
   let featurePedestal: ReturnType<typeof box> | null = null;
   let seatedPose = false;
@@ -1748,9 +1751,22 @@ export async function mountWorld(
   return {
     updateActivity(nextAgent: Row, runs: Row[]) {
       if (!agent || nextAgent.id !== agent.id) return;
-      const next = resolveActivity(nextAgent, runs);
+      const candidate = resolveActivity(nextAgent, runs);
       officeLive = nextAgent.connection === "Connected";
-      if (next === officeMode || !officeAvatar) return;
+      if (candidate === officeMode) {
+        pendingOfficeMode = candidate;
+        pendingOfficeModeHeartbeats = 0;
+      } else if (candidate !== pendingOfficeMode) {
+        pendingOfficeMode = candidate;
+        pendingOfficeModeHeartbeats = 1;
+      } else if (nextAgent.sequence !== lastOfficeSequence) {
+        pendingOfficeModeHeartbeats++;
+      }
+      lastOfficeSequence = nextAgent.sequence;
+      if (pendingOfficeModeHeartbeats < 2 || !officeAvatar) return;
+      const next = pendingOfficeMode;
+      pendingOfficeModeHeartbeats = 0;
+      if (next === officeMode) return;
       officeMode = next;
       canvas.dataset.activity = officeMode;
       seatedPose = ["typing", "reading", "on_call"].includes(next);

@@ -114,6 +114,8 @@ export class Core {
     const runs = this.s.list("run");
     const agents = this.s.list("agent").map(({ credentialHash, ...a }) => ({
       ...a,
+      workQueue: (a.workQueue || []).slice(0, 20),
+      workActivity: (a.workActivity || []).slice(0, 20),
       connection: !a.lastSeen
         ? "Never connected"
         : stamp() - Date.parse(a.lastSeen) > 600000
@@ -1830,6 +1832,8 @@ export class Core {
         status: v.status,
         activity: v.current_activity,
         currentTask: v.current_task || null,
+        workQueue: v.queue.map((item) => ({ text: item.text, detail: item.detail, time: item.time, source_key: item.source_key })),
+        workActivity: v.activity.map((item) => ({ summary: item.summary, detail: item.detail, time: item.time, source_key: item.source_key })),
         capabilities: v.capabilities,
         ...(v.instruction_hash ? { instructionHash: v.instruction_hash } : {}),
       });
@@ -1880,10 +1884,7 @@ export class Core {
         this.s.put("run", r);
       }
       for (const activity of v.activity) {
-        const key =
-          a.id +
-          ":activity:" +
-          (activity.source_key || hash(JSON.stringify(activity)));
+        const key = a.id + ":activity:" + (activity.source_key || hash(JSON.stringify(activity)));
         if (!this.s.get("dedupe", key)) {
           this.s.put("dedupe", { id: key });
           this.s.event(a.id, "activity.reported", a.id, {
@@ -1894,18 +1895,15 @@ export class Core {
         }
       }
       for (const item of v.queue) {
-        const key =
-          a.id + ":queue:" + (item.source_key || hash(JSON.stringify(item)));
-        if (!this.s.get("queue", key))
-          this.s.put("queue", {
-            id: key,
-            category: "recurring",
-            agentId: a.id,
+        const key = a.id + ":queue:" + (item.source_key || hash(JSON.stringify(item)));
+        if (!this.s.get("dedupe", key)) {
+          this.s.put("dedupe", { id: key });
+          this.s.event(a.id, "work.queue_reported", a.id, {
             text: item.text,
             detail: item.detail,
-            timeLabel: item.time,
-            createdAt: now(),
+            time: item.time,
           });
+        }
       }
       for (const event of v.events) {
         const eid = `${a.id}:${event.id}`;

@@ -963,6 +963,28 @@ footer span:last-child {
   grid-template-columns: minmax(0, 1.4fr) minmax(300px, 1fr);
   gap: 22px;
 }
+.crew-live-work {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(280px, 1fr);
+  gap: 22px;
+  margin-top: 22px;
+  transition: opacity 220ms ease;
+}
+.crew-live-work.is-stale { opacity: .62; }
+.live-work-panel, .live-activity-panel { min-width: 0; }
+.work-updated { margin: -4px 0 12px; color: var(--muted); font-size: 11px; }
+.current-task { padding: 14px 16px; margin: 10px 0 14px; border-radius: 12px; background: var(--bg); border-left: 3px solid var(--blue); }
+.current-task small, .current-task strong { display: block; }
+.current-task small { color: var(--muted); font-size: 10px; letter-spacing: .08em; }
+.current-task strong { margin-top: 5px; line-height: 1.4; }
+.work-item, .live-activity-list li { padding: 11px 0; border-bottom: 1px solid var(--line); }
+.work-item p, .live-activity-list p { margin: 5px 0; color: var(--muted); font-size: 12px; }
+.work-item small, .live-activity-list small { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+.live-activity-list { margin: 0; padding: 0; list-style: none; }
+.live-activity-list details { margin-top: 6px; color: var(--muted); font-size: 11px; }
+.live-activity-list summary { cursor: pointer; }
+.crew-office-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 22px; }
+.crew-office-bottom .runtime-boundaries { grid-column: auto; }
 .office-world {
   min-height: 470px;
 }
@@ -1473,6 +1495,7 @@ legend {
   .office-layout {
     grid-template-columns: 1fr;
   }
+  .crew-live-work, .crew-office-bottom { grid-template-columns: 1fr; }
   .crew-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -1493,6 +1516,7 @@ legend {
   }
 }
 @media (max-width: 700px) {
+  .crew-live-work, .crew-office-bottom { grid-template-columns: 1fr; }
   .mobile-workspace .nav-toggle { display:none; }
   .mobile-workspace .topbar { position:sticky; top:0; z-index:6; background:var(--bg); }
   .mobile-workspace main { padding-top:18px; }
