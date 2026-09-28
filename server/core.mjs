@@ -19,6 +19,7 @@ import {
   OFFICE_THEME_DESIGNS,
   officeDesignFromLegacy,
 } from "./contracts.mjs";
+import { createHarness } from "./harness.mjs";
 const terminal = ["completed", "failed", "expired", "canceled"];
 const stamp = () => Date.now();
 const denverMonth = (value) => {
@@ -36,6 +37,7 @@ const denverMonth = (value) => {
 export class Core {
   constructor(store) {
     this.s = store;
+    this.harness = createHarness(this);
   }
   require(kind, key) {
     const r = this.s.get(kind, key);
@@ -178,6 +180,7 @@ export class Core {
       workflows: this.s.list("workflow"),
       events: this.s.events(),
       sync: this.s.get("sync", "latest"),
+      harness: { upgrades:this.s.list("runtime_upgrade"), pins:this.s.list("capability_pin"), installs:this.s.list("capability_install"), scans:this.s.list("capability_scan"), healthChecks:this.s.list("harness_health"), analytics:this.harness.analytics(), scheduleNote:"Denver 2–4 AM wall time is app-validated only. Existing 4:10 AM UTC gate remains unchanged." },
       catalog: OFFICE_ASSETS,
       themes: OFFICE_THEME_DESIGNS,
     };
@@ -413,6 +416,7 @@ export class Core {
     this.owner(token);
     if (action === "get_dashboard" || action === "get_hq_snapshot")
       return this.snapshot();
+    if (action === "get_harness_analytics") return this.harness.analytics();
     if (action === "get_events")
       return this.s.events(
         String(b.search || "").slice(0, 100),
@@ -423,6 +427,11 @@ export class Core {
     return this.s.tx(() => {
       let r;
       switch (action) {
+        case "request_runtime_upgrade": r = this.harness.requestRuntimeUpgrade(z.string().regex(/^v?\d+\.\d+\.\d+$/).parse(b.version)); break;
+        case "scan_capabilities": r = this.harness.scanCapabilities(z.array(z.record(z.string(), z.unknown())).max(500).parse(b.items)); break;
+        case "request_capability_change": r = this.harness.requestCapabilityChange({ profileId:z.string().min(1).max(100).parse(b.profileId), capability:z.string().min(1).max(100).parse(b.capability), version:z.string().min(1).max(100).parse(b.version), operation:z.enum(["install","uninstall"]).parse(b.operation) }); break;
+        case "set_capability_pin": r = this.harness.setPin(z.string().min(1).max(100).parse(b.profileId), z.string().min(1).max(100).parse(b.capability), z.string().min(1).max(100).parse(b.version)); break;
+        case "record_harness_health": r = this.harness.recordHealth(b); break;
         case "owner_logout":
           this.s.remove("session", hash(token));
           return { ok: true };
@@ -883,6 +892,26 @@ export class Core {
           if (typeof b.artifact === "string" && b.artifact.trim()) r.editedArtifact = z.string().trim().max(10000).parse(b.artifact);
           r.resolvedAt = now();
           this.s.put("approval", r);
+          if (r.harnessOperation && r.kind === "RUNTIME_UPGRADE") {
+            const upgrade = this.require("runtime_upgrade", r.targetId);
+            upgrade.approvalStatus = r.status;
+            upgrade.status = r.status === "approved" ? "approved_staged" : "rejected";
+            upgrade.approvedAt = r.resolvedAt;
+            this.s.put("runtime_upgrade", upgrade);
+          }
+          if (r.harnessOperation && r.kind === "CAPABILITY_CHANGE") {
+            const change = this.require("capability_install", r.targetId);
+            change.approvalStatus = r.status;
+            change.status = r.status === "approved" ? "approved_staged" : "rejected";
+            change.resolvedAt = r.resolvedAt;
+            this.s.put("capability_install", change);
+          }
+          if (r.harnessOperation && r.kind === "CANARY_PROMOTION") {
+            const upgrade = this.require("runtime_upgrade", r.targetId);
+            upgrade.canary.mattPromotionApproved = r.status === "approved";
+            upgrade.canary.promotionResolvedAt = r.resolvedAt;
+            this.s.put("runtime_upgrade", upgrade);
+          }
           this.s.event("matt", "approval.resolved", r.id, { decision:r.status, note:r.resolution, tier:r.tier || null, workId:r.workId || null, artifactEdited:!!r.editedArtifact });
           if (r.requestedBy) {
             const message = { id:id(), agentId:r.requestedBy, workId:r.workId || null, body:`Owner ${r.status} “${r.title}”: ${r.resolution}`, scope:"private", status:"queued", author:"matt", createdAt:now() };
