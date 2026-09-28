@@ -143,8 +143,10 @@ export class Core {
         : a.agentDesign
           ? "Agent design"
           : "Theme default",
+      staleSession: !!this.s.list("conversation").some(c => c.agentId === a.id && c.runtimeSessionId && a.instructionHash && c.instructionHash !== a.instructionHash),
     }));
     const budgetEntries = this.s.list("budget_entry", 100000);
+    const usage = this.usageSummary();
     return {
       agents,
       config: this.require("config", "bis"),
@@ -169,6 +171,9 @@ export class Core {
         .list("budget")
         .map((b) => ({ ...b, used: this.budgetUsed(b, budgetEntries) })),
       budgetEntries,
+      usage,
+      templates: this.s.list("template"),
+      workflows: this.s.list("workflow"),
       events: this.s.events(),
       sync: this.s.get("sync", "latest"),
       catalog: OFFICE_ASSETS,
@@ -184,6 +189,13 @@ export class Core {
           (budget.period === "total" || denverMonth(entry.at) === month),
       )
       .reduce((sum, entry) => sum + entry.amount, 0);
+  }
+  usageSummary() {
+    const days = Array.from({length: 30}, (_, i) => new Date(Date.now() - i * 86400000).toISOString().slice(0, 10));
+    return this.s.list("agent").map(a => {
+      const commands = this.s.list("command", 100000).filter(c => c.agentId === a.id && c.verb === "work.start" && c.startedAt && days.includes(c.startedAt.slice(0, 10)));
+      return { agentId: a.id, days: days.map(day => { const rows = commands.filter(c => c.startedAt.slice(0, 10) === day); return { day, dispatches: rows.length, runtimeSeconds: rows.reduce((n,c)=>n+(c.runtimeSeconds||0),0), tokens: rows.reduce((n,c)=>n+(c.tokens||0),0), budgetHits: rows.filter(c=>c.exitReason === "budget_exceeded").length }; }) };
+    });
   }
   enqueue(agentId, verb, workId, payload = {}, dedupe = id()) {
     const previous = this.s.commandByKey(dedupe);
@@ -251,7 +263,7 @@ export class Core {
       return existing;
     }
     assert(
-      !this.require("config", "bis").stopped,
+      (!this.require("config", "bis").stopped || (this.require("config", "bis").exemptions || []).includes(agentId)),
       "Dispatch queue is stopped",
       409,
     );
@@ -518,16 +530,31 @@ export class Core {
         case "global_stop": {
           r = this.require("config", "bis");
           r.stopped = !!b.stopped;
+          r.stopMode = z.enum(["drain", "kill"]).default("drain").parse(b.mode || "drain");
+          r.exemptions = z.array(z.string().min(1).max(100)).max(100).parse(b.exemptions || r.exemptions || []);
+          for (const agentId of r.exemptions) this.require("agent", agentId);
           r.revision++;
           this.s.put("config", r);
-          if (r.stopped)
-            for (const a of this.s.list("agent").filter((a) => a.lastSeen))
-              this.enqueue(a.id, "agent.pause", null);
+          if (r.stopped && r.stopMode === "kill") for (const a of this.s.list("agent").filter((a) => a.lastSeen && !r.exemptions.includes(a.id))) this.enqueue(a.id, "agent.pause", null);
           break;
+        }
+        case "reset_agent_session": {
+          r = this.require("agent", b.agentId);
+          const conversations = this.s.list("conversation").filter(c => c.agentId === r.id && c.runtimeSessionId);
+          assert(conversations.length, "Agent has no active runtime session", 409);
+          for (const conversation of conversations) {
+            conversation.runtimeSessionId = null;
+            conversation.instructionHash = null;
+            conversation.resetAt = now();
+            conversation.resetBy = "matt";
+            this.s.put("conversation", conversation);
+          }
+          this.s.event("matt", "agent.session_reset", r.id, { conversationIds: conversations.map(c => c.id) });
+          return { ok: true, count: conversations.length };
         }
         case "start_agent_conversation": {
           this.require("agent", b.agentId);
-          r = { id: id(), agentId: b.agentId, createdAt: now(), updatedAt: now(), runtimeSessionId: null };
+          r = { id: id(), agentId: b.agentId, createdAt: now(), updatedAt: now(), runtimeSessionId: null, instructionHash: null };
           this.s.put("conversation", r);
           break;
         }
@@ -794,6 +821,11 @@ export class Core {
           r.resolution = z.string().trim().min(1).max(2000).parse(b.note);
           r.resolvedAt = now();
           this.s.put("approval", r);
+          if (r.status === "rejected" && r.requestedBy) {
+            const message = { id:id(), agentId:r.requestedBy, workId:r.workId || null, body:`Owner rejected “${r.title}”: ${r.resolution}`, scope:"private", status:"queued", author:"matt", createdAt:now() };
+            this.s.put("message", message);
+            this.enqueue(r.requestedBy, "message.deliver", r.workId || null, { messageId:message.id, body:message.body, runtimeSessionId:null });
+          }
           if (r.workId) {
             const w = this.require("work", r.workId);
             if (r.kind !== "POLICY") {
@@ -1334,6 +1366,27 @@ export class Core {
           this.s.put("routine", r);
           break;
         }
+        case "save_template": {
+          const steps = z.array(z.object({agentId:z.string().min(1).max(100),handoff:z.string().min(1).max(500)}).strict()).min(1).max(12).parse(b.steps);
+          for (const step of steps) this.require("agent", step.agentId);
+          r = { id: z.string().regex(/^[a-z0-9_-]{1,80}$/).parse(b.id || id()), name: z.string().trim().min(1).max(100).parse(b.name), steps, completionCriteria: z.string().trim().min(1).max(500).parse(b.completionCriteria), maxLoops: z.number().int().min(1).max(10).parse(b.maxLoops || 1) };
+          this.s.put("template", r);
+          break;
+        }
+        case "run_template": {
+          const template = this.require("template", b.templateId);
+          const agentId = b.agentId || template.steps[0].agentId;
+          this.require("agent", agentId);
+          const goalId = b.goalId || this.s.list("goal")[0]?.id;
+          this.require("goal", goalId);
+          const title = z.string().trim().min(1).max(160).parse(b.title);
+          const brief = z.string().trim().min(1).max(2000).parse(b.brief) + `\n\nWorkflow: ${template.name}. Completion: ${template.completionCriteria}. Steps: ${template.steps.map((s,i)=>`${i+1}. ${s.agentId}: ${s.handoff}`).join("; ")}. Maximum loops: ${template.maxLoops}.`;
+          const work = { id:id(), title, brief, priority:"normal", goalId, raci:{responsible:[agentId],accountable:"matt",consulted:[],informed:[]}, capability:"work.execute", scope:"bis", action:"read", status:"planned", revision:0, policyRevision:0, createdAt:now(), paused:false, templateId:template.id, templateProgress:template.steps.map((s,i)=>({step:i+1,agentId:s.agentId,status:"queued"})) };
+          this.s.put("work",work);
+          r = {id:id(),templateId:template.id,workId:work.id,status:"running",progress:work.templateProgress,createdAt:now()};
+          this.s.put("workflow",r);
+          break;
+        }
         default:
           throw new Fault("Unknown owner action", 404);
       }
@@ -1374,7 +1427,7 @@ export class Core {
         409,
       );
       assert(
-        !w.paused && !a.paused && !this.require("config", "bis").stopped,
+        !w.paused && !a.paused && (!this.require("config", "bis").stopped || (this.require("config", "bis").exemptions || []).includes(a.id)),
         "Dispatch is paused",
         409,
       );
@@ -1477,6 +1530,14 @@ export class Core {
     c.status = b.status;
     c.result = typeof b.result === "string" ? b.result.slice(0, 2000) : null;
     c.updatedAt = now();
+    if (b.status === "running") c.startedAt ||= now();
+    if (["completed", "failed"].includes(b.status)) {
+      c.runtimeSeconds = Math.max(0, Math.round((stamp() - Date.parse(c.startedAt || c.issuedAt)) / 1000));
+      c.budgetSeconds = Number(b.budget_seconds) || null;
+      c.exitReason = b.exit_reason || (b.status === "completed" ? "completed" : "error");
+      c.tokens = Number.isSafeInteger(b.tokens) && b.tokens >= 0 ? b.tokens : null;
+      if (b.error_lines) c.errorLines = z.string().max(1000).parse(b.error_lines);
+    }
     this.s.put("command", c);
     if (c.verb === "message.deliver") {
       const m = this.require("message", c.payload.messageId);
@@ -1556,7 +1617,7 @@ export class Core {
             c.agentId === a.id &&
             !terminal.includes(c.status) &&
             Date.parse(c.expiresAt) > stamp() &&
-            (!this.require("config", "bis").stopped ||
+            (!this.require("config", "bis").stopped || (this.require("config", "bis").exemptions || []).includes(a.id) ||
               !["work.start", "handoff.accept"].includes(c.verb)) &&
             (!a.paused || !["work.start", "handoff.accept"].includes(c.verb)),
         )
@@ -1613,6 +1674,7 @@ export class Core {
         activity: v.current_activity,
         currentTask: v.current_task || null,
         capabilities: v.capabilities,
+        ...(v.instruction_hash ? { instructionHash: v.instruction_hash } : {}),
       });
       if (v.avatar_image) {
         const bytes = Buffer.from(v.avatar_image.data_base64, "base64");
@@ -1720,6 +1782,10 @@ export class Core {
         workId: w.id,
         runId: b.runId || null,
         kind: z.enum(["MERGE", "DECISION", "ANSWER", "WATCH"]).parse(b.kind),
+        requestedBy: a.id,
+        artifact: typeof b.artifact === "string" ? z.string().max(10000).parse(b.artifact) : null,
+        tier: typeof b.tier === "string" ? z.string().max(40).parse(b.tier) : null,
+        expiresAt: typeof b.expiresAt === "string" ? z.string().datetime().parse(b.expiresAt) : null,
         title: z.string().min(1).max(160).parse(b.title),
         context: z.string().min(1).max(2000).parse(b.context),
         effect: z.string().min(1).max(1000).parse(b.effect),
@@ -1812,6 +1878,7 @@ export class Core {
         const conversation = this.require("conversation", m.conversationId);
         assert(conversation.agentId === a.id, "Conversation belongs to another agent", 403);
         conversation.runtimeSessionId = z.string().min(1).max(200).parse(b.runtimeSessionId);
+        if (b.instructionHash) conversation.instructionHash = z.string().regex(/^[a-f0-9]{64}$/).parse(b.instructionHash);
         conversation.updatedAt = now();
         this.s.put("conversation", conversation);
       }

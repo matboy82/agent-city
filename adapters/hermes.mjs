@@ -1,7 +1,15 @@
 ﻿import { spawn } from "node:child_process";
 import { resolve, join, sep } from "node:path";
-import { mkdir, writeFile, realpath, stat } from "node:fs/promises";
+import { mkdir, writeFile, realpath, stat, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 const running = new Map();
+export async function instructionHash() {
+  const workspace = await resolveHermesWorkspace(process.env.CREW_HERMES_WORKSPACE);
+  const files = [join(workspace, "SOUL.md"), join(workspace, "AGENTS.md"), process.env.CREW_HERMES_CONFIG].filter(Boolean);
+  const hash = createHash("sha256").update(process.env.CREW_HERMES_PROFILE || "default");
+  for (const file of files) { try { hash.update(file).update(await readFile(file)); } catch (error) { if (error.code !== "ENOENT") throw error; } }
+  return hash.digest("hex");
+}
 export async function resolveHermesWorkspace(path) {
   if (!path)
     throw new Error("Set CREW_HERMES_WORKSPACE to the BIS working directory");
@@ -60,6 +68,7 @@ export async function handle(command, { adapter, shouldStop }) {
   const workspace = await resolveHermesWorkspace(
     process.env.CREW_HERMES_WORKSPACE,
   );
+  const activeInstructionHash = await instructionHash();
   const args = [
     "--profile",
     profile,
@@ -83,6 +92,7 @@ export async function handle(command, { adapter, shouldStop }) {
   if (!Number.isInteger(budget) || budget < 60 || budget > 7200)
     throw new Error("CREW_HERMES_RUN_BUDGET must be 60–7200 seconds");
   args.push("--run-budget", String(budget));
+  const startedAt = Date.now();
   // Never use top-level --oneshot/-z or --yolo: Hermes' top-level oneshot bypasses approvals.
   const env = { ...process.env };
   delete env.HERMES_YOLO_MODE;
@@ -144,10 +154,11 @@ export async function handle(command, { adapter, shouldStop }) {
             "Hermes execution interrupted; inspect external effects before retry",
           ),
         );
-      if (code !== 0 || !final || final.exit_code !== 0)
-        return reject(
-          new Error("Hermes did not report a successful terminal result"),
-        );
+      if (code !== 0 || !final || final.exit_code !== 0) {
+        const error = new Error("Hermes did not report a successful terminal result");
+        if (Date.now() - startedAt >= budget * 1000 * 0.95) { error.code = "BUDGET_EXCEEDED"; error.budgetSeconds = budget; }
+        return reject(error);
+      }
       resolveResult(final);
     });
   });
@@ -171,8 +182,9 @@ export async function handle(command, { adapter, shouldStop }) {
         id: command.payload.messageId,
         body: terminal.text.slice(0, 4000) || "Hermes returned no text",
         runtimeSessionId: terminal.session_id,
+        instructionHash: activeInstructionHash,
       });
-      return { summary: "Hermes replied to the private message" };
+      return { summary: "Hermes replied to the private message", budgetSeconds: budget, tokens: terminal.tokens };
     }
     const dir = resolve(dirnameFromState(adapter.statePath), "results");
     await mkdir(dir, { recursive: true });
@@ -188,6 +200,8 @@ export async function handle(command, { adapter, shouldStop }) {
       { mode: 0o600 },
     );
     return {
+      budgetSeconds: budget,
+      tokens: terminal.tokens,
       summary:
         terminal.text.slice(0, 1800) ||
         "Hermes completed the turn; inspect its session for evidence",

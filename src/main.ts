@@ -225,7 +225,7 @@ function reviewCards(limit = 100) {
       .slice(0, limit)
       .map(
         (a: Row) =>
-          `<article class="review-card"><div class="row"><span class="eyebrow">${e(a.kind)}</span>${badge("waiting_approval")}</div><h3>${e(a.title)}</h3><p>${e(a.context)}</p><small>${e(a.effect)}</small><div class="actions">${button("Review decision", "review", `data-id="${e(a.id)}"`, "primary")}</div></article>`,
+          `<article class="review-card"><div class="row"><span class="eyebrow">${e(a.kind)}${a.tier ? ` · ${e(a.tier)}` : ""}</span>${badge("waiting_approval")}</div><h3>${e(a.title)}</h3><p>${e(a.context)}</p>${a.artifact ? `<pre>${e(a.artifact)}</pre>` : ""}<small>${e(a.effect)}${a.requestedBy ? ` · Requested by ${e(agent(a.requestedBy)?.name || a.requestedBy)}` : ""}</small><div class="actions">${button("Review decision", "review", `data-id="${e(a.id)}"`, "primary")}</div></article>`,
       )
       .join("") ||
     empty(
@@ -454,7 +454,7 @@ function commandRows(rows: Row[]) {
       .slice(0, 20)
       .map(
         (c) =>
-          `<div class="command-row"><div><strong>${e(c.verb)}</strong><small>${e(c.agentId)} · ${time(c.issuedAt)}</small></div>${badge(c.status)}</div>`,
+          `<div class="command-row"><div><strong>${e(c.verb)}</strong><small>${e(c.agentId)} · ${time(c.issuedAt)}${c.runtimeSeconds != null ? ` · Ran ${c.runtimeSeconds}s${c.budgetSeconds ? ` of ${c.budgetSeconds}s` : ""} — ${e(label(c.exitReason || c.status))}` : ""}</small></div>${badge(c.status)}</div>`,
       )
       .join("") || '<p class="muted">No commands issued.</p>'
   );
@@ -620,6 +620,13 @@ function budgetPanel() {
       .join("") || '<p class="muted">No resource budgets configured.</p>'
   }</div></section>`;
 }
+function usagePanel() {
+  const rows = data.usage || [];
+  return `<section class="panel spaced"><h2>Agent usage · last 30 days</h2><p class="muted">Runtime and dispatch counts come from completed Crew OS commands. Token totals are approximate when the runtime reports them.</p><div class="budget-grid">${rows.map((u: Row) => { const recent = u.days[0] || {}; const prior = u.days.slice(1, 8); const average = prior.reduce((n: number, d: Row) => n + d.dispatches, 0) / 7; const spike = average > 0 && recent.dispatches >= 3 * average; return `<article class="budget-card"><div class="row"><strong>${e(agent(u.agentId)?.name || u.agentId)}</strong>${spike ? badge("Usage spike") : ""}</div><p>Today: ${recent.dispatches || 0} dispatches · ${recent.runtimeSeconds || 0}s · ${recent.tokens || 0} approximate tokens</p><small>${u.days.reduce((n: number, d: Row) => n + d.budgetHits, 0)} budget hits in 30 days</small></article>`; }).join("")}</div></section>`;
+}
+function templatePanel() {
+  return `<section class="panel spaced"><div class="section-title"><h2>Dispatch templates</h2>${button("Manage pause exemptions", "pause-exemptions")}${button("Add template", "template-new")}</div>${(data.templates || []).map((t: Row) => `<div class="command-row"><div><strong>${e(t.name)}</strong><small>${t.steps.map((s: Row) => e(s.agentId)).join(" → ")} · ${e(t.completionCriteria)}</small></div>${button("Run", "template-run", `data-id="${e(t.id)}"`, "primary")}</div>`).join("")}</section>`;
+}
 function settings() {
   return `${heading("WORKSPACE", "Make it yours.", "BIS · America/Denver · portable, persistent storage")}<div class="lower-grid"><section class="panel"><h2>Experience</h2><div class="setting"><span>Lighting<small>Bright day or a quieter dusk</small></span>${button(dusk ? "Dusk" : "Day", "dusk")}</div><div class="setting"><span>Graphics<small>All operational controls work in 2D</small></span>${button(flat ? "2D interface" : "3D world", "flat")}</div><div class="setting"><span>Reduced motion<small>Keep state. Reduce movement.</small></span>${button(reduced ? "On" : "Off", "motion")}</div><h2 class="spaced">Owner access</h2><p class="muted">Sessions expire after 12 hours. Your passphrase has no reset flow.</p>${button("Sign out", "logout")}</section><section class="panel"><h2>Morning synchronization</h2><p>Daily at 5:55 AM America/Denver. Source refresh runs on the server without an open browser.</p><p class="muted">Configure read-only Google Calendar and GitHub access on the server.</p>${button("Refresh now", "sync", "", "primary")}<pre>${e(JSON.stringify(data.sync || { status: "unconfigured" }, null, 2))}</pre></section></div><section class="panel spaced"><div class="section-title"><h2>Routines</h2>${button("Add routine", "routine")}</div>${data.routines.map((r: Row) => `<div class="queue-row"><strong>${e(r.title)}</strong><span>${e(r.time)} Denver · ${r.enabled ? "Enabled" : "Disabled"} · ${e(r.lastResult || "Not run")}</span>${button(r.enabled ? "Pause" : "Enable", "pause-routine", `data-id="${e(r.id)}"`)}</div>`).join("") || '<p class="muted">No recurring work. Routines create planned work for owner dispatch.</p>'}</section><section class="panel spaced"><h2>Assets & credits</h2><p>Furniture Kit and Space Kit by <a href="https://kenney.nl/assets" target="_blank" rel="noopener">Kenney</a> · CC0. Campus street lights, rooftop equipment and HQ console from <a href="https://quaternius.com/packs/cyberpunkgamekit.html" target="_blank" rel="noopener">Quaternius Cyberpunk Game Kit</a> · CC0. Jeff and Relay use supplied portraits and locally authored full-body models; Jefferson and Jev now have matching articulated character models and portraits.</p><div class="credit-grid">${Object.values(
     data.catalog,
@@ -628,7 +635,7 @@ function settings() {
       (a: any) =>
         `<span>${e(a.label)}<small>${e(a.author)} · ${e(a.license)}</small></span>`,
     )
-    .join("")}</div></section>${budgetPanel()}`;
+    .join("")}</div></section>${budgetPanel()}${usagePanel()}${templatePanel()}`;
 }
 function project() {
   const b = data.buildings.find((b: Row) => b.id === selected);
@@ -747,6 +754,15 @@ async function render(preserveWorld = false) {
     )}</nav></div><div class="sidebar-bottom"><div class="workspace-health"><span class="health-dot"></span><div>All work, one place.<small>${data.agents.filter((a: Row) => a.connection === "Connected").length} of ${data.agents.length} agents connected</small></div></div>${button(icon("settings") + "<span>Settings</span>", "nav", 'data-view="settings" aria-label="Settings and credits" title="Settings and credits"', view === "settings" ? "nav-link active" : "nav-link")}<div class="owner"><span class="owner-avatar">M</span><div><strong>Matt</strong><small>Workspace owner</small></div>${button("?", "logout", 'aria-label="Sign out"', "icon-button")}</div></div></aside><div class="main-shell"><header class="topbar">${button(icon("nav"), "toggle-nav", `aria-label="${navCollapsed ? "Expand" : "Collapse"} navigation" aria-expanded="${!navCollapsed}"`, "icon-button nav-toggle")}<div class="breadcrumb">BIS <span>/</span> ${e(view === "office" ? agent(selected)?.name : view === "hq" ? "Headquarters" : view === "dashboard" ? "Overview" : label(view))}</div><div class="topbar-right">${button(icon("settings"), "nav", 'data-view="settings" aria-label="Settings and credits"', "mobile-settings icon-button")}<span class="timezone">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", hour: "numeric", minute: "2-digit" }).format(new Date())} <small>DENVER</small></span>${!mobile ? button(mode === "2d" ? "3D City" : "2D Workspace", "mode", "", "mode-toggle") : ""}${button(icon("pause") + (data.config.stopped ? " Dispatch stopped" : " Stop dispatch"), "stop", "", data.config.stopped ? "stop-button stopped" : "stop-button")}</div></header><main>${view === "dashboard" ? dashboard2d() : view === "conversations" ? conversationsPage() : view === "city" ? city() : view === "hq" ? hq() : view === "office" ? office() : view === "agent" ? office(true) : ["brief", "agenda", "reviews", "goals"].includes(view) ? focusedPage() : view === "crew" ? crew() : view === "settings" ? settings() : view === "project" ? project() : heading("AUDIT TRAIL", "Every action has a history.", "Immutable records from the owner, agents, and scheduler.") + '<section class="panel"><label class="search-field">' + icon("search") + '<input id="event-search" placeholder="Search event, actor, or entity…" aria-label="Search activity"></label><div id="event-results">' + timeline() + "</div></section>"}</main><footer>BIS / CREW OS <span>Built for real work. Made to feel alive.</span><span>America/Denver</span></footer></div></div>`;
   if (retainedStage)
     document.querySelector(".world-stage")?.replaceWith(retainedStage);
+  if (["office", "agent", "conversations"].includes(view)) {
+    const recipient = view === "conversations" ? chatAgent : selected;
+    const a = agent(recipient);
+    const header = document.querySelector("#chat-pane .chat-header");
+    if (header && a && data.conversations.some((c: Row) => c.agentId === a.id && c.runtimeSessionId)) {
+      header.insertAdjacentHTML("beforeend", button("Reset session", "reset-session", `data-id="${e(a.id)}"`));
+      if (a.staleSession) header.insertAdjacentHTML("afterend", '<p class="badge warn">Session predates latest instructions — reset recommended</p>');
+    }
+  }
   if (view === "activity") {
     const search = document.querySelector<HTMLElement>(".search-field");
     search?.insertAdjacentHTML("beforebegin", activityControls());
@@ -1138,6 +1154,25 @@ document.addEventListener("click", async (ev) => {
       document.querySelector<HTMLTextAreaElement>("#message-body")?.focus();
       return;
     }
+    if (action === "template-run") {
+      const t = (data.templates || []).find((x: Row) => x.id === id);
+      if (!t) throw new Error("Template not found");
+      openForm(`Run ${t.name}`, "Create workflow", input("title", "Task title") + `<label>Task brief<textarea name="brief" required maxlength="2000"></textarea></label>` + select("goalId", "Goal", data.goals.map((g: Row) => [g.id, g.name])) + select("agentId", "First step agent", t.steps.map((s: Row) => [s.agentId, agent(s.agentId)?.name || s.agentId])), async f => { await api("run_template", { templateId: id, ...Object.fromEntries(f) }); await refresh(); await render(); });
+      return;
+    }
+    if (action === "template-new") {
+      openForm("New dispatch template", "Save template", input("id", "Template ID") + input("name", "Name") + input("agentId", "First agent ID") + input("handoff", "Step handoff format") + input("completionCriteria", "Completion criteria") + input("maxLoops", "Maximum loops", "number"), async f => { await api("save_template", { id: f.get("id"), name: f.get("name"), steps: [{agentId:f.get("agentId"),handoff:f.get("handoff")}], completionCriteria:f.get("completionCriteria"), maxLoops:Number(f.get("maxLoops") || 1) }); await refresh(); await render(); });
+      return;
+    }
+    if (action === "reset-session") {
+      const a = agent(id || selected);
+      if (!a || !confirm(`Reset ${a.name}'s session? This ends the agent's current conversation context. Unsaved in-progress work in that session is lost.`)) return;
+      await api("reset_agent_session", { agentId: a.id });
+      await refresh();
+      await render();
+      toast("Agent session reset. The next message starts fresh.");
+      return;
+    }
     if (action === "close") {
       document.querySelector("dialog")?.close();
       return;
@@ -1502,12 +1537,21 @@ document.addEventListener("click", async (ev) => {
       return;
     }
     if (action === "stop") {
-      await act("global_stop", { stopped: !data.config.stopped });
+      if (!data.config.stopped && !confirm("Pause the crew and let in-flight runs drain to completion or budget? New work will not start.")) return;
+      await act("global_stop", { stopped: !data.config.stopped, mode: "drain", exemptions: data.config.exemptions || [] });
       toast(
         data.config.stopped
           ? "New dispatch halted. Runtime stop acknowledgments appear in Live Ops."
           : "Dispatch queue reopened.",
       );
+      return;
+    }
+    if (action === "pause-exemptions") {
+      const value = prompt(`Agent IDs allowed to keep working during a crew pause (comma separated):\n${data.agents.map((a: Row) => a.id).join(", ")}`, (data.config.exemptions || []).join(", "));
+      if (value === null) return;
+      const exemptions = value.split(",").map((x: string) => x.trim()).filter(Boolean);
+      await api("global_stop", { stopped: data.config.stopped, exemptions, mode: "drain" });
+      await refresh(); await render();
       return;
     }
     if (action === "sync") {

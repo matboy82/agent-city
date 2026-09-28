@@ -76,6 +76,7 @@ export const heartbeatSchema = z
     protocol_version: z.union([z.literal(1), z.literal(2)]).default(1),
     agent_id: key,
     runtime_id: key.optional(),
+    instruction_hash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     sequence: revision.optional(),
     status: z.enum(["active", "idle", "waiting_on_matt"]),
     last_seen: z.string().datetime(),

@@ -54,6 +54,7 @@ export class Adapter {
     runId = null,
     capabilities = ["work.execute"],
     officeDesign,
+    instructionHash,
   } = {}) {
     const sequence = ++this.state.sequence;
     await this.save();
@@ -67,18 +68,23 @@ export class Adapter {
       current_task: task,
       current_run_id: runId,
       capabilities,
+      ...(instructionHash ? { instruction_hash: instructionHash } : {}),
       ...(officeDesign ? { office_design: officeDesign } : {}),
       ...(process.env.CREW_ACTIVITY
         ? { current_activity: process.env.CREW_ACTIVITY }
         : {}),
     });
   }
-  async ack(command, status, runId, result) {
+  async ack(command, status, runId, result, metadata = {}) {
     return this.call("ack_command", {
       command_id: command.id,
       status,
       ...(runId ? { run_id: runId } : {}),
       ...(result ? { result: result.slice(0, 2000) } : {}),
+      ...(metadata.budgetSeconds ? { budget_seconds: metadata.budgetSeconds } : {}),
+      ...(metadata.exitReason ? { exit_reason: metadata.exitReason } : {}),
+      ...(metadata.errorLines ? { error_lines: metadata.errorLines.slice(0, 1000) } : {}),
+      ...(metadata.tokens ? { tokens: metadata.tokens } : {}),
     });
   }
   async process(command, handler) {
@@ -134,7 +140,7 @@ export class Adapter {
         result: summary,
       };
       await this.save();
-      await this.ack(command, "completed", runId, summary);
+      await this.ack(command, "completed", runId, summary, { budgetSeconds: result?.budgetSeconds, exitReason: "completed", tokens: result?.tokens });
     } catch (e) {
       if (this.state.commands[command.id]?.state === "completed") throw e;
       this.state.commands[command.id] = { state: "uncertain", runId };
@@ -145,6 +151,7 @@ export class Adapter {
           "failed",
           runId,
           "Runtime stopped without a verified result; reconcile external effects before retry.",
+          { exitReason: e.code === "BUDGET_EXCEEDED" ? "budget_exceeded" : "error", budgetSeconds: e.budgetSeconds, errorLines: e.message },
         );
       } catch {
         // Keep the local uncertain record if the server cannot accept the failure.
@@ -209,12 +216,14 @@ if (
     const handler = (
       await import(pathToFileURL(resolve(process.env.CREW_HANDLER)).href)
     ).handle;
+    const handlerModule = await import(pathToFileURL(resolve(process.env.CREW_HANDLER)).href);
+    const getInstructionHash = handlerModule.instructionHash;
     if (typeof handler !== "function")
       throw new Error("Handler must export handle");
     const inflight = new Map();
     while (true) {
       try {
-        await adapter.heartbeat({ status: process.env.CREW_STATUS || (inflight.size ? "active" : "idle") });
+        await adapter.heartbeat({ status: process.env.CREW_STATUS || (inflight.size ? "active" : "idle"), instructionHash: typeof getInstructionHash === "function" ? await getInstructionHash() : undefined });
         const commands = await adapter.call("poll_commands");
         for (const command of commands) {
           if (inflight.has(command.id)) continue;
