@@ -497,17 +497,19 @@ function dashboard2d() {
   return `${heading("BIS WORKSPACE", "Your workspace.", "The latest from your crew and the work in motion.", button(icon("plus") + " New mission", "new-mission", "", "primary"))}<div class="dashboard-stats"><button class="dashboard-stat" data-action="nav" data-view="crew"><small>CONNECTED CREW</small><strong>${connected}<span> / ${data.agents.length}</span></strong><em>${data.agents.length - connected} offline</em></button><button class="dashboard-stat" data-action="nav" data-view="reviews"><small>NEEDS YOUR REVIEW</small><strong>${waiting.length}</strong><em>${waiting.length ? "Decisions waiting" : "All clear"}</em></button><button class="dashboard-stat" data-action="nav" data-view="activity"><small>RUNNING NOW</small><strong>${running}</strong><em>${data.work.filter((w: Row) => !["done", "canceled"].includes(w.status)).length} open missions</em></button><button class="dashboard-stat" data-action="nav" data-view="agenda"><small>ON TODAY'S AGENDA</small><strong>${data.queue.length}</strong><em>Scheduled and queued</em></button></div><div class="dashboard-grid"><section class="panel"><div class="section-title"><h2>Waiting on you</h2>${button("See all", "nav", 'data-view="reviews"', "text-button")}</div>${reviewCards(3)}</section><section class="panel"><div class="section-title"><h2>Today's agenda</h2>${button("View agenda", "nav", 'data-view="agenda"', "text-button")}</div>${data.queue.slice(0, 5).map((q: Row) => `<div class="queue-row"><span class="queue-time">${e(q.timeLabel || "ANYTIME")}</span><span>${e(q.text)}${q.group ? `<small class="queue-group">${e(q.group)}</small>` : ""}</span></div>`).join("") || '<p class="muted">Nothing queued. Add an item to keep the day moving.</p>'}</section><section class="panel"><div class="section-title"><h2>Active crew</h2>${button("All crew", "nav", 'data-view="crew"', "text-button")}</div><div class="dashboard-crew">${data.agents.filter((a: Row) => a.connection === "Connected").slice(0, 6).map((a: Row) => `<button class="dashboard-person" data-action="chat-agent" data-id="${e(a.id)}">${avatar(a)}<span><strong>${e(a.name)}</strong><small>${e(a.currentTask || a.role)}</small></span>${badge(a.operationalState || a.connection)}</button>`).join("") || '<p class="muted">No agents connected right now.</p>'}</div></section><section class="panel"><div class="section-title"><h2>Recent activity</h2>${button("Open audit trail", "nav", 'data-view="activity"', "text-button")}</div><div class="dashboard-timeline">${timeline(data.events.slice(0, 5))}</div></section></div>`;
 }
 function updateChatPane(scroll = false) {
-  if (view !== "office" && view !== "agent") return;
+  if (view !== "office" && view !== "agent" && view !== "conversations") return;
+  const recipient = view === "conversations" ? chatAgent : selected;
   const pane = document.querySelector<HTMLElement>("#chat-pane");
   if (!pane) return;
   const log = pane.querySelector<HTMLElement>("#chat-messages");
   const bottom = !log || log.scrollHeight - log.scrollTop - log.clientHeight < 64;
   const previous = log?.scrollTop || 0;
-  pane.innerHTML = chatMarkup(selected);
+  pane.innerHTML = chatMarkup(recipient);
   const next = pane.querySelector<HTMLElement>("#chat-messages");
   if (next) next.scrollTop = scroll || bottom ? next.scrollHeight : previous;
-  const pending = data.messages.some((m: Row) => m.conversationId === conversationId(selected) && ["queued", "delivered", "acknowledged"].includes(m.status));
-  document.querySelector<HTMLButtonElement>("#message-form button[type=submit]")!.disabled = pending;
+  const pending = data.messages.some((m: Row) => m.conversationId === conversationId(recipient) && ["queued", "delivered", "acknowledged"].includes(m.status));
+  const send = document.querySelector<HTMLButtonElement>("#message-form button[type=submit]");
+  if (send) send.disabled = pending;
 }
 function hqPositionEditor() {
   const offset = hqZoneDraft[hqSelectedZone] || [0, 0, 0];
@@ -859,7 +861,7 @@ async function render(preserveWorld = false) {
     const offset = hqZoneDraft[hqSelectedZone] || [0, 0, 0];
     document.querySelector("#hq-position-values")!.textContent = `Offset: ${offset.map((v) => v.toFixed(2)).join(" / ")} m`;
   });
-  if (view === "office" || view === "agent") updateChatPane(true);
+  if (view === "office" || view === "agent" || view === "conversations") updateChatPane(true);
   focusViewer();
   if (retainedStage) return;
   if (view === "city" || view === "office" || view === "hq") {
@@ -1128,8 +1130,9 @@ document.addEventListener("click", async (ev) => {
   const { action, id, operation } = target.dataset;
   try {
     if (action === "new-chat-session") {
-      const result = await api("start_agent_conversation", { agentId: selected });
-      chatSelection.set(selected, result.id);
+      const recipient = view === "conversations" ? chatAgent : selected;
+      const result = await api("start_agent_conversation", { agentId: recipient });
+      chatSelection.set(recipient, result.id);
       await refresh();
       updateChatPane(true);
       document.querySelector<HTMLTextAreaElement>("#message-body")?.focus();
@@ -2224,9 +2227,11 @@ document.addEventListener("submit", (ev) => {
   })();
 });
 document.addEventListener("change", (ev) => {
-  if ((ev.target as HTMLElement).id !== "chat-session") return;
-  chatSelection.set(selected, (ev.target as HTMLSelectElement).value);
-  updateChatPane(true);
+  if ((ev.target as HTMLElement).id === "chat-session") {
+    const recipient = view === "conversations" ? chatAgent : selected;
+    chatSelection.set(recipient, (ev.target as HTMLSelectElement).value);
+    updateChatPane(true);
+  }
 });
 mobileQuery.addEventListener("change", () => { mobile = mobileQuery.matches; void render(); });
 let searchTimeout: ReturnType<typeof setTimeout>;
@@ -2288,6 +2293,10 @@ async function boot() {
             if (view === "office" && sceneKey() === previousScene) {
               const current = agent(selected);
               if (current) world?.updateActivity(current, data.runs);
+              if (presentationKey(data) !== old) updateChatPane();
+              return;
+            }
+            if (view === "conversations") {
               if (presentationKey(data) !== old) updateChatPane();
               return;
             }

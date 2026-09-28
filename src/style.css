@@ -289,7 +289,11 @@ a {
 .inbox-agent.active { background:#edf3ff; color:var(--blue); }
 .inbox-agent b { margin-left:auto; background:var(--blue); color:#fff; border-radius:10px; padding:2px 7px; }
 .inbox-thread { min-width:0; }
-.inbox-thread .messages { min-height:250px; max-height:50vh; overflow:auto; }
+.inbox-thread { height:min(760px, calc(100dvh - 190px)); min-height:460px; overflow:hidden; }
+.inbox-thread #chat-pane { display:flex; flex:1; flex-direction:column; min-height:0; overflow:hidden; }
+.inbox-thread #chat-pane .messages { flex:1; height:auto; min-height:0; max-height:none; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; }
+.inbox-thread #message-form { flex:0 0 auto; padding-top:10px; background:var(--panel); }
+.inbox-thread #message-body { width:100%; min-height:54px; max-height:180px; resize:vertical; }
 .two-d-mode .world-card,.two-d-mode .office-world { display:none; }
 .two-d-mode .mode-toggle { background:#edf3ff; color:var(--blue); }
 .topbar {
@@ -978,6 +982,7 @@ footer span:last-child {
   height: 310px;
   min-height: 220px;
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -1508,7 +1513,8 @@ legend {
   .mobile-workspace .inbox-agent .avatar { width:32px; height:32px; }
   .mobile-workspace .inbox-agent small { max-width:100px; }
   .mobile-workspace .inbox-thread { padding:14px; }
-  .mobile-workspace .inbox-thread .messages { max-height:none; min-height:36vh; }
+  .mobile-workspace .inbox-thread { height:calc(100dvh - 190px); min-height:380px; }
+  .mobile-workspace .inbox-thread .messages { max-height:none; min-height:0; height:auto; }
   .mobile-workspace .chat-compose-actions { align-items:flex-end; }
   .mobile-workspace .chat-compose-actions small { display:none; }
   .mobile-workspace #message-body { min-height:72px; }
