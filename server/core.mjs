@@ -358,10 +358,10 @@ export class Core {
     const entry = { id: id(), agentId, workId: workId || null, tier, type, recommendation: String(recommendation || "").slice(0, 2000), jevScore: null, jevRecommendation: null, jevConfidence: null, agentConfidence: typeof agentConfidence === "number" ? agentConfidence : null, agreement: null, disagreement: null, escalated: false, label: null, humanLabel: null, status: "scoring", approvalId, ...(adHoc ? { adHoc: true } : {}), createdAt: now() };
     this.s.put("jev_ledger", entry);
     const questions = customQuestions || (tier === "L1" ? {
-      risk: { type: "score", instructions: "Score risk from 0 (minimal) to 10 (critical).", criteria: ["minimal", "very low", "low", "low-moderate", "moderate", "moderate-high", "high", "very high", "severe", "very severe", "critical"] },
-      urgency: { type: "score", instructions: "Score urgency from 0 (not urgent) to 10 (immediate).", criteria: ["none", "minimal", "low", "low-moderate", "moderate", "moderate-high", "high", "very high", "urgent", "very urgent", "immediate"] },
+      risk: { type: "score", instructions: "Score risk from 0 (minimal) to 10 (critical).", criteria: ["minimal", "very low", "low", "low-moderate", "moderate", "moderate-high", "high", "very high", "severe", "critical"] },
+      urgency: { type: "score", instructions: "Score urgency from 0 (not urgent) to 10 (immediate).", criteria: ["none", "minimal", "low", "low-moderate", "moderate", "moderate-high", "high", "very high", "urgent", "immediate"] },
       verdict: { type: "choice", instructions: "Should Jev agree with the recommendation?", criteria: { agree: "Recommendation is sound", disagree: "Recommendation is unsound" } },
-    } : { soundness: { type: "score", instructions: "Score judgment soundness from 0 (unsound) to 10 (excellent), and provide confidence.", criteria: ["unsound", "very weak", "weak", "weak-mixed", "mixed", "mixed-sound", "sound", "mostly sound", "very sound", "near-excellent", "excellent"] } });
+    } : { soundness: { type: "score", instructions: "Score judgment soundness from 0 (unsound) to 10 (excellent), and provide confidence.", criteria: ["unsound", "very weak", "weak", "weak-mixed", "mixed", "sound", "mostly sound", "very sound", "near-excellent", "excellent"] } });
     const work = this.s.get("work", workId);
     this.enqueue("jev", adHoc ? "jev.score" : "work.start", workId || null, { scoring: true, ledgerId: entry.id, title: `${tier} ${type} scoring`, detail: entry.recommendation, state: { objective: work?.contract?.objective || "", constraints: work?.contract?.constraints || [], tier }, questions }, `jev-score:${entry.id}`);
     return entry;
@@ -1833,11 +1833,19 @@ export class Core {
             try {
               const result = typeof b.result === "string" ? JSON.parse(b.result) : b.result;
               const answers = result?.answers || {};
-              const scoreAnswer = answers.risk || answers.soundness || answers.urgency || Object.values(answers).find(answer => answer && answer.score !== undefined);
-              const score = Number(scoreAnswer?.score);
+              const scoreIds = ["risk", "soundness", "urgency", "priority"];
+              let scoreId = scoreIds.find(id => answers[id]?.score !== undefined);
+              if (!scoreId) scoreId = Object.keys(answers).find(id => answers[id]?.score !== undefined);
+              const scoreAnswer = scoreId ? answers[scoreId] : undefined;
+              const rawScore = Number(scoreAnswer?.score);
+              // The Jev API returns scores on the level-index scale (0 to criteria.length - 1);
+              // normalize to the 0-10 display scale.
+              const levels = c.payload?.questions?.[scoreId]?.criteria?.length;
+              const normScore = Number.isFinite(rawScore) && levels > 1 ? rawScore / (levels - 1) * 10 : rawScore;
+              const score = Math.round(normScore * 100) / 100;
               entry.jevScore = Number.isFinite(score) && score >= 0 && score <= 10 ? score : null;
               entry.jevConfidence = scoreAnswer?.confidence == null || !Number.isFinite(Number(scoreAnswer.confidence)) ? null : Number(scoreAnswer.confidence);
-              entry.jevRecommendation = answers.verdict?.choice || answers.route?.choice || (scoreAnswer?.score != null ? `${scoreAnswer.score}/10` : null);
+              entry.jevRecommendation = answers.verdict?.choice || answers.route?.choice || (entry.jevScore != null ? `${entry.jevScore}/10` : null);
               const agrees = answers.verdict?.choice ? String(answers.verdict.choice).toLowerCase() === "agree" : null;
               entry.agreement = agrees; entry.disagreement = agrees === false || (typeof entry.agentConfidence === "number" && typeof entry.jevConfidence === "number" && Math.abs(entry.agentConfidence - entry.jevConfidence) > 0.3);
               entry.escalated = entry.disagreement === true; entry.status = entry.jevScore === null ? "unscored" : "scored"; entry.scoredAt = now();
@@ -2039,9 +2047,9 @@ export class Core {
       const preset = b.preset === undefined ? "priority" : b.preset;
       let questions = b.questions;
       if (questions === undefined) {
-        const priority = { type: "score", instructions: `Score the priority of this work item from 0 (ignore) to 10 (immediate). Title: Jev judgment. Detail: ${detail}`, criteria: ["ignore", "negligible", "low", "low-normal", "normal", "normal-high", "high", "very high", "urgent", "extremely urgent", "immediate"] };
-        const risk = { type: "score", instructions: "Score risk from 0 (minimal) to 10 (critical).", criteria: ["minimal", "very low", "low", "low-moderate", "moderate", "moderate-high", "high", "very high", "severe", "very severe", "critical"] };
-        const soundness = { type: "score", instructions: "Score judgment soundness from 0 (unsound) to 10 (excellent), and provide confidence.", criteria: ["unsound", "very weak", "weak", "weak-mixed", "mixed", "mixed-sound", "sound", "mostly sound", "very sound", "near-excellent", "excellent"] };
+        const priority = { type: "score", instructions: `Score the priority of this work item from 0 (ignore) to 10 (immediate). Title: Jev judgment. Detail: ${detail}`, criteria: ["ignore", "negligible", "low", "low-normal", "normal", "normal-high", "high", "very high", "urgent", "immediate"] };
+        const risk = { type: "score", instructions: "Score risk from 0 (minimal) to 10 (critical).", criteria: ["minimal", "very low", "low", "low-moderate", "moderate", "moderate-high", "high", "very high", "severe", "critical"] };
+        const soundness = { type: "score", instructions: "Score judgment soundness from 0 (unsound) to 10 (excellent), and provide confidence.", criteria: ["unsound", "very weak", "weak", "weak-mixed", "mixed", "sound", "mostly sound", "very sound", "near-excellent", "excellent"] };
         questions = preset === "priority" ? { priority, route: { type: "choice", instructions: `Who should handle this? Title: Jev judgment. Detail: ${detail}`, criteria: { dave: "Chief of staff — substantive analysis, planning, coordination", relay: "Relay — quick ops, inbox, research, follow-ups", specialists: "A specialist agent — domain-specific deep work", matt: "Needs Matt's direct decision or input" } } } : preset === "risk" ? { risk } : { soundness };
       } else {
         assert(questions && typeof questions === "object" && !Array.isArray(questions) && Object.keys(questions).length > 0, "questions must be a non-empty object");
@@ -2052,7 +2060,7 @@ export class Core {
             assert(Array.isArray(question.criteria), `Score question ${qid} requires criteria`);
             const range = question.instructions.match(/(\d+)\s*(?:to|[-–])\s*(\d+)/i);
             assert(range, `Score question ${qid} instructions must state a numeric scale`);
-            assert(question.criteria.length === Number(range[2]) - Number(range[1]) + 1, `Score question ${qid} criteria length does not match its stated scale`);
+            assert(question.criteria.length >= 2 && question.criteria.length <= 10, `Score question ${qid} must have 2-10 criteria levels (Jev API limit)`);
           } else assert(question.criteria && typeof question.criteria === "object" && !Array.isArray(question.criteria), `Choice question ${qid} requires criteria`);
         }
       }

@@ -19,7 +19,7 @@ function defaultQuestions(work) {
     priority: {
       type: "score",
       instructions: `Score the priority of this work item from 0 (ignore) to 10 (immediate). Title: ${title}. Detail: ${detail}`,
-      criteria: ["ignore", "negligible", "low", "low-normal", "normal", "normal-high", "high", "very high", "urgent", "extremely urgent", "immediate"],
+      criteria: ["ignore", "negligible", "low", "low-normal", "normal", "normal-high", "high", "very high", "urgent", "immediate"],
     },
     route: {
       type: "choice",
