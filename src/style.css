@@ -1030,6 +1030,17 @@ footer span:last-child {
   padding: 14px 0;
   border-bottom: 1px solid var(--line);
 }
+.announcement-compose form { display: grid; gap: 10px; }
+.announcement-compose textarea { min-height: 130px; }
+.announcement-compose label { font-size: 12px; font-weight: 650; }
+.announcement-compose label small { color: var(--muted); font-weight: 400; }
+.crew-announcement { padding: 18px 0; border-bottom: 1px solid var(--line); }
+.crew-announcement h3 { margin: 0 0 4px; }
+.crew-announcement > p { white-space: pre-wrap; line-height: 1.55; }
+.crew-announcement details { margin-top: 12px; }
+.crew-announcement summary { cursor: pointer; color: var(--blue); font-size: 12px; }
+.crew-announcement ul { padding: 0; list-style: none; }
+.crew-announcement li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); }
 .message p {
   font-size: 12px;
   white-space: pre-wrap;

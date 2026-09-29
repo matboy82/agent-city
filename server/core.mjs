@@ -729,6 +729,41 @@ export class Core {
           }
           break;
         }
+        case "send_crew_broadcast": {
+          const body = z.string().trim().min(1).max(4000).parse(b.body);
+          const title = b.title == null ? "" : z.string().trim().max(120).parse(b.title);
+          const state = this.s.get("broadcast_state", "crew") || { id: "crew" };
+          assert(!state.lastSentAt || stamp() - Date.parse(state.lastSentAt) >= 300000, "Wait five minutes before sending another crew announcement", 429);
+          const recipients = this.s.list("agent").filter((a) => !a.archived && !a.archivedAt && !a.retired && !a.retiredAt && !["archived", "retired"].includes(a.status));
+          assert(recipients.length > 0, "There are no active crew members to notify", 409);
+          const broadcastId = id();
+          const createdAt = now();
+          const messages = recipients.map((recipient) => ({
+            id: id(),
+            broadcastId,
+            agentId: recipient.id,
+            workId: null,
+            body,
+            title: title || null,
+            scope: "crew",
+            conversationId: null,
+            status: "queued",
+            author: "matt",
+            createdAt,
+          }));
+          for (const message of messages) {
+            this.s.put("message", message);
+            this.enqueue(message.agentId, "message.deliver", null, {
+              messageId: message.id,
+              body: message.body,
+              runtimeSessionId: null,
+            });
+          }
+          this.s.put("broadcast_state", { ...state, lastSentAt: createdAt, broadcastId });
+          this.s.event("matt", "crew.broadcast_sent", broadcastId, { title, recipientIds: recipients.map((a) => a.id) });
+          r = { id: broadcastId, broadcastId, recipientCount: messages.length, createdAt };
+          break;
+        }
         case "promote_thread": {
           r = this.require("message", b.id);
           assert(b.workId, "Choose a mission");
@@ -1611,7 +1646,12 @@ export class Core {
           throw new Fault("Unknown owner action", 404);
       }
       this.s.event("matt", action, r?.id || "bis", { revision: r?.revision });
-      return { ok: true, id: r?.id, workId: r?.workId };
+      return {
+        ok: true,
+        id: r?.id,
+        workId: r?.workId,
+        ...(r?.broadcastId ? { broadcastId: r.broadcastId, recipientCount: r.recipientCount, createdAt: r.createdAt } : {}),
+      };
     });
   }
   claim(a, c) {

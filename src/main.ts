@@ -512,6 +512,19 @@ function conversationsPage() {
   const unread = (id: string) => data.messages.filter((m: Row) => m.agentId === id && m.scope === "private" && m.reply).length;
   return `${heading("CREW MESSAGING", "Conversations", "Pick a teammate and continue a private conversation.")}<div class="inbox-layout"><nav class="inbox-agents" aria-label="Conversations">${agents.map((a: Row) => `<button class="inbox-agent ${a.id === active.id ? "active" : ""}" data-action="chat-agent" data-id="${e(a.id)}">${avatar(a)}<span><strong>${e(a.name)}</strong><small>${e(a.currentTask || a.role)}</small></span>${unread(a.id) ? `<b>${unread(a.id)}</b>` : ""}</button>`).join("")}</nav><section class="panel conversation inbox-thread"><div class="section-title"><div class="row">${avatar(active)}<div><h2>${e(active.name)}</h2><small>${e(active.role)} · ${e(active.connection)}</small></div></div><span class="eyebrow">PRIVATE</span></div><div id="chat-pane">${chatMarkup(active.id)}</div><form id="message-form"><label class="sr-only" for="message-body">Message ${e(active.name)}</label><textarea id="message-body" name="body" placeholder="Message ${e(active.name)}…" required maxlength="4000"></textarea><div class="chat-compose-actions"><small>Enter to send · Shift+Enter for a new line</small><button class="primary" type="submit">Send ${icon("arrow")}</button></div></form></section></div>`;
 }
+function announcementsPage() {
+  const groups = new Map<string, Row[]>();
+  for (const message of data.messages.filter((m: Row) => m.scope === "crew")) {
+    const key = message.broadcastId || message.id;
+    groups.set(key, [...(groups.get(key) || []), message]);
+  }
+  const broadcasts = [...groups.entries()].sort((a, b) => (b[1][0]?.createdAt || "").localeCompare(a[1][0]?.createdAt || ""));
+  return `${heading("CREW MESSAGING", "Crew announcements", "Owner-sent notes delivered to every active crew member.")}<section class="panel announcement-compose"><h2>New announcement</h2><form id="broadcast-form"><label for="broadcast-title">Title <small>Optional</small></label><input id="broadcast-title" name="title" maxlength="120" placeholder="A short heading"><label for="broadcast-body">Announcement</label><textarea id="broadcast-body" name="body" maxlength="4000" required placeholder="Write an update for the crew…"></textarea><div class="chat-compose-actions"><small>Delivered individually with a receipt for each agent.</small><button class="primary" type="submit">Send to crew ${icon("arrow")}</button></div></form></section><section class="panel spaced"><div class="section-title"><h2>Announcement history</h2></div>${broadcasts.map(([, rows]) => {
+    const first = rows[0];
+    const delivered = rows.filter((m) => ["delivered", "acknowledged", "replied"].includes(m.status)).length;
+    return `<article class="crew-announcement"><div class="section-title"><div><h3>${e(first.title || "Crew announcement")}</h3><small>${e(first.author === "matt" ? "Matt" : first.author)} · ${time(first.createdAt)}</small></div><span class="eyebrow">${delivered}/${rows.length} delivered</span></div><p>${e(first.body)}</p><details><summary>Delivery receipts (${rows.length})</summary><ul>${rows.map((m) => `<li><span>${e(agent(m.agentId)?.name || m.agentId)}</span>${badge(m.status)}</li>`).join("")}</ul></details></article>`;
+  }).join("") || empty("No announcements yet", "Your crew-wide announcements will appear here with per-agent delivery receipts.")}</section>`;
+}
 function dashboard2d() {
   const running = data.runs.filter((r: Row) => r.status === "running").length;
   const connected = data.agents.filter((a: Row) => a.connection === "Connected").length;
@@ -750,6 +763,7 @@ async function render(preserveWorld = false) {
   app.innerHTML = `<div class="shell ${mobile ? "mobile-workspace" : ""} ${mode === "2d" ? "two-d-mode" : "three-d-mode"}"><aside class="sidebar"><a class="brand" href="#" data-action="nav" data-view="${mobile || mode === "2d" ? "dashboard" : "city"}"><span class="brand-mark">C<span>•</span></span><span>crew<span class="brand-light">os</span><small>BIS WORKSPACE</small></span></a><div class="sidebar-caption">WORKSPACE</div><nav aria-label="Main navigation">${[
     ["dashboard", "Overview"],
     ["conversations", "Chat"],
+    ["announcements", "Crew announcements"],
     ["crew", "Your crew"],
     ["activity", "Activity"],
     ["harness", "Harness & Jev"],
@@ -783,7 +797,7 @@ async function render(preserveWorld = false) {
     )
     .join(
       "",
-    )}</nav></div><div class="sidebar-bottom"><div class="workspace-health"><span class="health-dot"></span><div>All work, one place.<small>${data.agents.filter((a: Row) => a.connection === "Connected").length} of ${data.agents.length} agents connected</small></div></div>${button(icon("settings") + "<span>Settings</span>", "nav", 'data-view="settings" aria-label="Settings and credits" title="Settings and credits"', view === "settings" ? "nav-link active" : "nav-link")}<div class="owner"><span class="owner-avatar">M</span><div><strong>Matt</strong><small>Workspace owner</small></div>${button("?", "logout", 'aria-label="Sign out"', "icon-button")}</div></div></aside><div class="main-shell"><header class="topbar">${button(icon("nav"), "toggle-nav", `aria-label="${navCollapsed ? "Expand" : "Collapse"} navigation" aria-expanded="${!navCollapsed}"`, "icon-button nav-toggle")}<div class="breadcrumb">BIS <span>/</span> ${e(view === "office" ? agent(selected)?.name : view === "hq" ? "Headquarters" : view === "dashboard" ? "Overview" : label(view))}</div><div class="topbar-right">${button(icon("settings"), "nav", 'data-view="settings" aria-label="Settings and credits"', "mobile-settings icon-button")}<span class="timezone">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", hour: "numeric", minute: "2-digit" }).format(new Date())} <small>DENVER</small></span>${!mobile ? button(mode === "2d" ? "3D City" : "2D Workspace", "mode", "", "mode-toggle") : ""}${button(icon("pause") + (data.config.stopped ? " Dispatch stopped" : " Stop dispatch"), "stop", "", data.config.stopped ? "stop-button stopped" : "stop-button")}</div></header><main>${view === "harness" ? harnessPanel() : view === "dashboard" ? dashboard2d() : view === "conversations" ? conversationsPage() : view === "city" ? city() : view === "hq" ? hq() : view === "office" ? office() : view === "agent" ? office(true) : ["brief", "agenda", "reviews", "goals"].includes(view) ? focusedPage() : view === "crew" ? crew() : view === "settings" ? settings() : view === "project" ? project() : view === "activity" ? activity() : heading("AUDIT TRAIL", "Every action has a history.", "Immutable records from the owner, agents, and scheduler.") + '<section class="panel"><label class="search-field">' + icon("search") + '<input id="event-search" placeholder="Search event, actor, or entity…" aria-label="Search activity"></label><div id="event-results">' + timeline() + "</div></section>"}</main><footer>BIS / CREW OS <span>Built for real work. Made to feel alive.</span><span>America/Denver</span></footer></div></div>`;
+    )}</nav></div><div class="sidebar-bottom"><div class="workspace-health"><span class="health-dot"></span><div>All work, one place.<small>${data.agents.filter((a: Row) => a.connection === "Connected").length} of ${data.agents.length} agents connected</small></div></div>${button(icon("settings") + "<span>Settings</span>", "nav", 'data-view="settings" aria-label="Settings and credits" title="Settings and credits"', view === "settings" ? "nav-link active" : "nav-link")}<div class="owner"><span class="owner-avatar">M</span><div><strong>Matt</strong><small>Workspace owner</small></div>${button("?", "logout", 'aria-label="Sign out"', "icon-button")}</div></div></aside><div class="main-shell"><header class="topbar">${button(icon("nav"), "toggle-nav", `aria-label="${navCollapsed ? "Expand" : "Collapse"} navigation" aria-expanded="${!navCollapsed}"`, "icon-button nav-toggle")}<div class="breadcrumb">BIS <span>/</span> ${e(view === "office" ? agent(selected)?.name : view === "hq" ? "Headquarters" : view === "dashboard" ? "Overview" : label(view))}</div><div class="topbar-right">${button(icon("settings"), "nav", 'data-view="settings" aria-label="Settings and credits"', "mobile-settings icon-button")}<span class="timezone">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", hour: "numeric", minute: "2-digit" }).format(new Date())} <small>DENVER</small></span>${!mobile ? button(mode === "2d" ? "3D City" : "2D Workspace", "mode", "", "mode-toggle") : ""}${button(icon("pause") + (data.config.stopped ? " Dispatch stopped" : " Stop dispatch"), "stop", "", data.config.stopped ? "stop-button stopped" : "stop-button")}</div></header><main>${view === "harness" ? harnessPanel() : view === "dashboard" ? dashboard2d() : view === "conversations" ? conversationsPage() : view === "announcements" ? announcementsPage() : view === "city" ? city() : view === "hq" ? hq() : view === "office" ? office() : view === "agent" ? office(true) : ["brief", "agenda", "reviews", "goals"].includes(view) ? focusedPage() : view === "crew" ? crew() : view === "settings" ? settings() : view === "project" ? project() : view === "activity" ? activity() : heading("AUDIT TRAIL", "Every action has a history.", "Immutable records from the owner, agents, and scheduler.") + '<section class="panel"><label class="search-field">' + icon("search") + '<input id="event-search" placeholder="Search event, actor, or entity…" aria-label="Search activity"></label><div id="event-results">' + timeline() + "</div></section>"}</main><footer>BIS / CREW OS <span>Built for real work. Made to feel alive.</span><span>America/Denver</span></footer></div></div>`;
    if (retainedStage)
     document.querySelector(".world-stage")?.replaceWith(retainedStage);
   if (["office", "agent", "conversations"].includes(view)) {
@@ -2285,6 +2299,29 @@ function openDesign(id: string) {
   );
 }
 document.addEventListener("submit", (ev) => {
+  if ((ev.target as HTMLElement).id === "broadcast-form") {
+    ev.preventDefault();
+    const form = ev.target as HTMLFormElement;
+    const send = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+    const values = new FormData(form);
+    send.disabled = true;
+    void (async () => {
+      try {
+        const result = await api("send_crew_broadcast", {
+          title: String(values.get("title") || "").trim() || undefined,
+          body: String(values.get("body") || "").trim(),
+        });
+        form.reset();
+        await refresh();
+        await render();
+        toast(`Announcement sent to ${result.recipientCount} crew members.`);
+      } catch (err) {
+        send.disabled = false;
+        toast((err as Error).message, true);
+      }
+    })();
+    return;
+  }
   if ((ev.target as HTMLElement).id !== "message-form") return;
   ev.preventDefault();
   const f = ev.target as HTMLFormElement;

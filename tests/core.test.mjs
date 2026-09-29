@@ -426,6 +426,30 @@ test("private messages have explicit queued, delivered, acknowledged and replied
   assert.equal(f.s.get("message", m.id).status, "replied");
   f.s.close();
 });
+test("crew broadcasts require the owner and fan out crew scoped delivery receipts", () => {
+  const f = fixture();
+  assert.throws(
+    () => f.c.ownerAction("send_crew_broadcast", { body: "Team update" }, ""),
+    /Sign in/,
+  );
+  assert.equal(f.s.list("message").length, 0);
+  f.s.put("agent", { ...f.s.get("agent", "jev"), archivedAt: new Date().toISOString() });
+  const result = f.call("send_crew_broadcast", {
+    title: "A team update",
+    body: "Thank you for all your work.",
+  });
+  const messages = f.s.list("message");
+  const commands = f.s.list("command").filter((command) => command.verb === "message.deliver");
+  const expectedRecipients = f.s.list("agent").filter((agent) => !agent.archived && !agent.archivedAt && !agent.retired && !agent.retiredAt && !["archived", "retired"].includes(agent.status)).map((agent) => agent.id).sort();
+  assert.equal(result.recipientCount, expectedRecipients.length);
+  assert.equal(messages.length, expectedRecipients.length);
+  assert.equal(commands.length, expectedRecipients.length);
+  assert.deepEqual(messages.map((message) => message.agentId).sort(), expectedRecipients);
+  assert(messages.every((message) => message.broadcastId === result.broadcastId));
+  assert(messages.every((message) => message.scope === "crew" && message.status === "queued"));
+  assert(commands.every((command) => command.payload.runtimeSessionId === null));
+  f.s.close();
+});
 test("private conversation sessions resume only their own agent and serialize turns", () => {
   const f = fixture();
   const first = f.call("start_agent_conversation", { agentId: "dave" });
