@@ -295,6 +295,34 @@ export class Core {
     // by Dave as Chief of Staff. Drop his lingering agent record on startup.
     if (this.s.get("agent", "jeff")) this.s.tx(() => this.removeAgent("jeff"));
   }
+  migrateDaveIdentity() {
+    // One-time succession fix: Dave's live record still carried his
+    // pre-succession "Money Factory" / "Unconfigured" identity and his HQ
+    // building was missing. Align with the seeded Chief of Staff identity.
+    // Only touches records that still show the stale identity, so later
+    // owner edits are never clobbered.
+    const d = this.s.get("agent", "dave");
+    if (d && (d.name === "Money Factory" || d.role === "Unconfigured")) {
+      d.name = "Dave";
+      d.role = "Chief of Staff";
+      d.theme = "command_center";
+      d.revision = (d.revision || 0) + 1;
+      this.s.put("agent", d);
+    }
+    const b = this.s.get("building", "dave");
+    if (!b || (typeof b.name === "string" && b.name.includes("Money Factory"))) {
+      this.s.put("building", {
+        id: "dave",
+        name: "The War Room",
+        agentId: "dave",
+        kind: "agent_hq",
+        style: "command",
+        x: -7,
+        z: -5,
+        accent: "#2768df",
+      });
+    }
+  }
   enqueue(agentId, verb, workId, payload = {}, dedupe = id()) {
     const previous = this.s.commandByKey(dedupe);
     if (previous) return JSON.parse(previous);

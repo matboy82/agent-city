@@ -801,3 +801,28 @@ test("pairing gate follows the sitting chief of staff", () => {
   assert.doesNotThrow(() => f.pair("relay"));
   f.s.close();
 });
+test("migrateDaveIdentity fixes stale Money Factory identity and restores The War Room", () => {
+  const f = fixture();
+  const d = f.s.get("agent", "dave");
+  d.name = "Money Factory";
+  d.role = "Unconfigured";
+  d.theme = "neutral";
+  f.s.put("agent", d);
+  f.s.remove("building", "dave");
+  f.c.migrateDaveIdentity();
+  const fixed = f.s.get("agent", "dave");
+  assert.equal(fixed.name, "Dave");
+  assert.equal(fixed.role, "Chief of Staff");
+  assert.equal(fixed.theme, "command_center");
+  const b = f.s.get("building", "dave");
+  assert.equal(b.name, "The War Room");
+  assert.equal(b.agentId, "dave");
+  assert.equal(b.kind, "agent_hq");
+  // Idempotent and non-destructive: owner edits are never clobbered.
+  fixed.name = "Dave (custom)";
+  f.s.put("agent", fixed);
+  f.c.migrateDaveIdentity();
+  assert.equal(f.s.get("agent", "dave").name, "Dave (custom)");
+  assert.equal(f.s.get("building", "dave").name, "The War Room");
+  f.s.close();
+});

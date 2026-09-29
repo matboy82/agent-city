@@ -13,6 +13,7 @@ export async function createApp({
     core = new Core(store),
     scheduler = new Scheduler(core);
   core.retireLegacyAgents();
+  core.migrateDaveIdentity();
   const vite = dev
     ? await (
         await import("vite")
