@@ -12,9 +12,10 @@ export const now = () => new Date().toISOString();
 export const id = () => randomUUID();
 export const hash = (value) => createHash("sha256").update(value).digest("hex");
 export class Fault extends Error {
-  constructor(message, status = 400) {
+  constructor(message, status = 400, details = {}) {
     super(message);
     this.status = status;
+    Object.assign(this, details);
   }
 }
 export function assert(ok, message, status = 400) {
@@ -38,6 +39,8 @@ export class Store {
           name: "BIS",
           stopped: false,
           revision: 0,
+          jevAdHocPerAgentHour: 20,
+          jevAdHocCrewPerDay: 200,
         });
         const crew = [
           [
@@ -124,6 +127,10 @@ export class Store {
         ]) this.put("template", template);
       });
     this.tx(() => {
+        const config = this.get("config", "bis");
+        if (config.jevAdHocPerAgentHour === undefined) config.jevAdHocPerAgentHour = 20;
+        if (config.jevAdHocCrewPerDay === undefined) config.jevAdHocCrewPerDay = 200;
+        this.put("config", config);
         for (const template of [
           { id: "review_loop", name: "Review loop", steps: [{agentId:"nerby",handoff:"Implementation result"},{agentId:"chad",handoff:"Review findings"}], completionCriteria:"Reviewer approves", maxLoops:3 },
           { id: "crew_briefing", name: "Crew briefing", steps: [{agentId:"dave",handoff:"Collected updates"},{agentId:"jev",handoff:"Red team assessment"},{agentId:"dave",handoff:"Final briefing"}], completionCriteria:"Briefing delivered", maxLoops:1 },

@@ -13,7 +13,9 @@ Heartbeat example:
 
 Send a fresh timestamp and monotonic sequence. Repeated sequences are ignored, gaps are audited. Observations more than ten minutes from server time are rejected. Active runs need renewal within two minutes: include their `current_run_id` in a heartbeat at least every 30 seconds. A lease that has already expired cannot be revived.
 
-Agent actions: `get_office_catalog`, `poll_commands`, `claim_command`, `ack_command`, `report_heartbeat`, `submit_artifact`, `request_handoff`, `reply_message`.
+Agent actions: `get_office_catalog`, `poll_commands`, `claim_command`, `ack_command`, `report_heartbeat`, `submit_artifact`, `request_handoff`, `reply_message`, `request_jev_judgment`, `get_jev_judgment`.
+
+Use `request_jev_judgment` for discretionary calls such as prioritization, draft soundness, or plan risk, not routine execution. Jev is advisory; use your judgment and escalate only decisions that need Matt. Poll `get_jev_judgment` every five seconds for up to 60 seconds, then proceed without Jev if it is still scoring or unscored. Never re-ask the same question for a better score. Include `agentConfidence` when known. A request needs `detail` (1–2000 characters) and an `idempotency_key` (at least 8 characters); optional presets are `priority`, `risk`, and `soundness`. Custom score criteria must have one label for every point in the scale stated in the question instructions. Rate-limit errors return HTTP 429 with `retry_after` seconds.
 
 An acknowledgment is `{ "command_id": "...", "status": "accepted|running|completed|failed", "run_id": "...", "result": "..." }`. Accepted, running and completed are separate steps. A repeated state is idempotent; backward and skipped transitions fail. The accepted work command returns the run ID. Only the credential's bound runtime can own that run.
 

@@ -18,8 +18,8 @@ function defaultQuestions(work) {
   return {
     priority: {
       type: "score",
-      instructions: `Score the priority of this work item from 0 (ignore) to 10 (urgent). Title: ${title}. Detail: ${detail}`,
-      criteria: ["ignore", "low", "normal", "high", "urgent"],
+      instructions: `Score the priority of this work item from 0 (ignore) to 10 (immediate). Title: ${title}. Detail: ${detail}`,
+      criteria: ["ignore", "negligible", "low", "low-normal", "normal", "normal-high", "high", "very high", "urgent", "extremely urgent", "immediate"],
     },
     route: {
       type: "choice",
@@ -36,7 +36,7 @@ function defaultQuestions(work) {
 
 export async function handle(command, { adapter }) {
   const verb = command.verb;
-  if (!["work.start", "message.deliver", "handoff.accept"].includes(verb)) {
+  if (!["work.start", "jev.score", "message.deliver", "handoff.accept"].includes(verb)) {
     throw new Error("Unsupported Jev command: " + verb);
   }
 

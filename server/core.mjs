@@ -210,9 +210,10 @@ export class Core {
   }
   usageSummary() {
     const days = Array.from({length: 30}, (_, i) => new Date(Date.now() - i * 86400000).toISOString().slice(0, 10));
+    const adHoc = this.s.list("jev_ledger", 100000).filter(entry => entry.adHoc && entry.createdAt);
     return this.s.list("agent").map(a => {
       const commands = this.s.list("command", 100000).filter(c => c.agentId === a.id && c.verb === "work.start" && c.startedAt && days.includes(c.startedAt.slice(0, 10)));
-      return { agentId: a.id, days: days.map(day => { const rows = commands.filter(c => c.startedAt.slice(0, 10) === day); return { day, dispatches: rows.length, runtimeSeconds: rows.reduce((n,c)=>n+(c.runtimeSeconds||0),0), tokens: rows.reduce((n,c)=>n+(c.tokens||0),0), budgetHits: rows.filter(c=>c.exitReason === "budget_exceeded").length }; }) };
+      return { agentId: a.id, days: days.map(day => { const rows = commands.filter(c => c.startedAt.slice(0, 10) === day); const jevAdHoc = adHoc.filter(entry => entry.agentId === a.id && entry.createdAt.slice(0, 10) === day).length; return { day, dispatches: rows.length, runtimeSeconds: rows.reduce((n,c)=>n+(c.runtimeSeconds||0),0), tokens: rows.reduce((n,c)=>n+(c.tokens||0),0), budgetHits: rows.filter(c=>c.exitReason === "budget_exceeded").length, jevAdHoc }; }) };
     });
   }
   advanceTemplate(work, result) {
@@ -347,22 +348,22 @@ export class Core {
       status: "queued",
       issuedAt: now(),
       expiresAt: new Date(stamp() + 3600000).toISOString(),
-      retryPolicy: agentId === "jev" && verb === "work.start" && payload.scoring ? { attempts: 3, delayMs: 1000 } : null,
+      retryPolicy: agentId === "jev" && ["work.start", "jev.score"].includes(verb) && payload.scoring ? { attempts: 3, delayMs: 1000 } : null,
     };
     this.s.put("command", c);
     this.s.event("matt", "command.queued", c.id, { agentId, verb, workId });
     return c;
   }
-  createJevEntry({ agentId, workId, tier, type, recommendation, approvalId = null, agentConfidence = null }) {
-    const entry = { id: id(), agentId, workId, tier, type, recommendation: String(recommendation || "").slice(0, 2000), jevScore: null, jevRecommendation: null, jevConfidence: null, agentConfidence: typeof agentConfidence === "number" ? agentConfidence : null, agreement: null, disagreement: null, escalated: false, label: null, status: "scoring", approvalId, createdAt: now() };
+  createJevEntry({ agentId, workId, tier, type, recommendation, approvalId = null, agentConfidence = null, questions: customQuestions = null, adHoc = false }) {
+    const entry = { id: id(), agentId, workId: workId || null, tier, type, recommendation: String(recommendation || "").slice(0, 2000), jevScore: null, jevRecommendation: null, jevConfidence: null, agentConfidence: typeof agentConfidence === "number" ? agentConfidence : null, agreement: null, disagreement: null, escalated: false, label: null, humanLabel: null, status: "scoring", approvalId, ...(adHoc ? { adHoc: true } : {}), createdAt: now() };
     this.s.put("jev_ledger", entry);
-    const questions = tier === "L1" ? {
-      risk: { type: "score", instructions: "Score risk from 0 (minimal) to 10 (critical).", criteria: ["minimal", "low", "moderate", "high", "critical"] },
-      urgency: { type: "score", instructions: "Score urgency from 0 (not urgent) to 10 (immediate).", criteria: ["none", "low", "moderate", "high", "immediate"] },
+    const questions = customQuestions || (tier === "L1" ? {
+      risk: { type: "score", instructions: "Score risk from 0 (minimal) to 10 (critical).", criteria: ["minimal", "very low", "low", "low-moderate", "moderate", "moderate-high", "high", "very high", "severe", "very severe", "critical"] },
+      urgency: { type: "score", instructions: "Score urgency from 0 (not urgent) to 10 (immediate).", criteria: ["none", "minimal", "low", "low-moderate", "moderate", "moderate-high", "high", "very high", "urgent", "very urgent", "immediate"] },
       verdict: { type: "choice", instructions: "Should Jev agree with the recommendation?", criteria: { agree: "Recommendation is sound", disagree: "Recommendation is unsound" } },
-    } : { soundness: { type: "score", instructions: "Score judgment soundness from 0 (unsound) to 10 (excellent), and provide confidence.", criteria: ["unsound", "weak", "mixed", "sound", "excellent"] } };
+    } : { soundness: { type: "score", instructions: "Score judgment soundness from 0 (unsound) to 10 (excellent), and provide confidence.", criteria: ["unsound", "very weak", "weak", "weak-mixed", "mixed", "mixed-sound", "sound", "mostly sound", "very sound", "near-excellent", "excellent"] } });
     const work = this.s.get("work", workId);
-    this.enqueue("jev", "work.start", workId, { scoring: true, ledgerId: entry.id, title: `${tier} ${type} scoring`, detail: entry.recommendation, state: { objective: work?.contract?.objective || "", constraints: work?.contract?.constraints || [], tier }, questions }, `jev-score:${entry.id}`);
+    this.enqueue("jev", adHoc ? "jev.score" : "work.start", workId || null, { scoring: true, ledgerId: entry.id, title: `${tier} ${type} scoring`, detail: entry.recommendation, state: { objective: work?.contract?.objective || "", constraints: work?.contract?.constraints || [], tier }, questions }, `jev-score:${entry.id}`);
     return entry;
   }
   recordJevFailure(entry, error) {
@@ -528,6 +529,15 @@ export class Core {
     return this.s.tx(() => {
       let r;
       switch (action) {
+        case "set_jev_limits": {
+          const config = this.require("config", "bis");
+          config.jevAdHocPerAgentHour = z.number().int().min(1).max(1000).parse(b.jevAdHocPerAgentHour);
+          config.jevAdHocCrewPerDay = z.number().int().min(1).max(10000).parse(b.jevAdHocCrewPerDay);
+          config.revision = (config.revision || 0) + 1;
+          this.s.put("config", config);
+          r = config;
+          break;
+        }
         case "request_runtime_upgrade": r = this.harness.requestRuntimeUpgrade(z.string().regex(/^v?\d+\.\d+\.\d+$/).parse(b.version)); break;
         case "scan_capabilities": r = this.harness.scanCapabilities(z.array(z.record(z.string(), z.unknown())).max(500).parse(b.items)); break;
         case "request_capability_change": r = this.harness.requestCapabilityChange({ profileId:z.string().min(1).max(100).parse(b.profileId), capability:z.string().min(1).max(100).parse(b.capability), version:z.string().min(1).max(100).parse(b.version), operation:z.enum(["install","uninstall"]).parse(b.operation) }); break;
@@ -1758,6 +1768,16 @@ export class Core {
       this.s.put("command", c);
       return r;
     }
+    if (c.verb === "jev.score") {
+      const r = {
+        id: id(), workId: null, commandId: c.id, agentId: a.id, runtimeId: a.runtimeId,
+        status: "accepted", leaseUntil: new Date(stamp() + 120000).toISOString(), createdAt: now(), failureClass: null,
+      };
+      this.s.put("run", r);
+      c.runId = r.id;
+      this.s.put("command", c);
+      return r;
+    }
     return null;
   }
   ack(a, b) {
@@ -1796,20 +1816,28 @@ export class Core {
       if (b.failure_class) run.failureClass = z.enum(["TOOL_TIMEOUT","INVALID_ARGUMENTS","MISSING_CONTEXT","FAILED_CHECK","PERMISSION_DENIED","CONFLICTING_REQUIREMENTS","UNCHANGED_REPEATED_FAILURE"]).parse(b.failure_class);
       if (b.status === "failed" && !run.failureClass) run.failureClass = "UNCHANGED_REPEATED_FAILURE";
       this.s.put("run", run);
-      const w = this.require("work", c.workId);
       if (c.payload?.scoring && ["completed", "failed"].includes(b.status)) {
         const entry = this.s.get("jev_ledger", c.payload.ledgerId);
         if (entry && entry.status === "scoring") {
-          if (b.status === "failed") this.recordJevFailure(entry, new Error(b.error_lines || "Jev scoring command failed"));
+          if (b.status === "failed") {
+            c.scoringAttempts = (c.scoringAttempts || 0) + 1;
+            const policy = c.retryPolicy || { attempts: 3, delayMs: 1000 };
+            if (c.scoringAttempts < policy.attempts) {
+              c.status = "queued"; c.issuedAt = now(); c.expiresAt = new Date(stamp() + 3600000).toISOString(); c.lastScoringFailure = b.error_lines || "Jev scoring failed";
+              this.s.put("command", c);
+              return c;
+            }
+            this.recordJevFailure(entry, new Error(b.error_lines || "Jev scoring command failed"));
+          }
           else {
             try {
               const result = typeof b.result === "string" ? JSON.parse(b.result) : b.result;
               const answers = result?.answers || {};
-              const scoreAnswer = answers.risk || answers.soundness;
-              const score = Number(scoreAnswer?.score ?? answers.urgency?.score);
+              const scoreAnswer = answers.risk || answers.soundness || answers.urgency || Object.values(answers).find(answer => answer && answer.score !== undefined);
+              const score = Number(scoreAnswer?.score);
               entry.jevScore = Number.isFinite(score) && score >= 0 && score <= 10 ? score : null;
               entry.jevConfidence = scoreAnswer?.confidence == null || !Number.isFinite(Number(scoreAnswer.confidence)) ? null : Number(scoreAnswer.confidence);
-              entry.jevRecommendation = answers.verdict?.choice || (scoreAnswer?.score != null ? `soundness ${scoreAnswer.score}/10` : null);
+              entry.jevRecommendation = answers.verdict?.choice || answers.route?.choice || (scoreAnswer?.score != null ? `${scoreAnswer.score}/10` : null);
               const agrees = answers.verdict?.choice ? String(answers.verdict.choice).toLowerCase() === "agree" : null;
               entry.agreement = agrees; entry.disagreement = agrees === false || (typeof entry.agentConfidence === "number" && typeof entry.jevConfidence === "number" && Math.abs(entry.agentConfidence - entry.jevConfidence) > 0.3);
               entry.escalated = entry.disagreement === true; entry.status = entry.jevScore === null ? "unscored" : "scored"; entry.scoredAt = now();
@@ -1821,6 +1849,7 @@ export class Core {
         }
         c.status = b.status; c.result = typeof b.result === "string" ? b.result.slice(0, 2000) : null; c.updatedAt = now(); this.s.put("command", c); return c;
       }
+      const w = this.require("work", c.workId);
       if (b.status === "completed" || b.status === "failed") {
         const receiptText = run.result || "";
         const verdict = (criterion) => {
@@ -1995,6 +2024,58 @@ export class Core {
   agentOperation(action, b, a) {
     if (action === "get_office_catalog")
       return { assets: OFFICE_ASSETS, themes: OFFICE_THEME_DESIGNS };
+    if (action === "request_jev_judgment") {
+      const detail = z.string().min(1).max(2000).parse(b.detail);
+      assert(detail.trim().length > 0, "detail must not be empty");
+      const idem = z.string().min(8).max(200).parse(b.idempotency_key);
+      if (b.preset !== undefined) z.enum(["priority", "risk", "soundness"]).parse(b.preset);
+      const key = `${a.id}:jev:${idem}`;
+      const prior = this.s.list("jev_ledger", 100000).find(x => x.adHoc && x.agentId === a.id && x.idempotencyKey === key);
+      if (prior) return { ledgerId: prior.id, status: prior.status };
+      const preset = b.preset === undefined ? "priority" : b.preset;
+      let questions = b.questions;
+      if (questions === undefined) {
+        const priority = { type: "score", instructions: `Score the priority of this work item from 0 (ignore) to 10 (immediate). Title: Jev judgment. Detail: ${detail}`, criteria: ["ignore", "negligible", "low", "low-normal", "normal", "normal-high", "high", "very high", "urgent", "extremely urgent", "immediate"] };
+        const risk = { type: "score", instructions: "Score risk from 0 (minimal) to 10 (critical).", criteria: ["minimal", "very low", "low", "low-moderate", "moderate", "moderate-high", "high", "very high", "severe", "very severe", "critical"] };
+        const soundness = { type: "score", instructions: "Score judgment soundness from 0 (unsound) to 10 (excellent), and provide confidence.", criteria: ["unsound", "very weak", "weak", "weak-mixed", "mixed", "mixed-sound", "sound", "mostly sound", "very sound", "near-excellent", "excellent"] };
+        questions = preset === "priority" ? { priority, route: { type: "choice", instructions: `Who should handle this? Title: Jev judgment. Detail: ${detail}`, criteria: { dave: "Chief of staff — substantive analysis, planning, coordination", relay: "Relay — quick ops, inbox, research, follow-ups", specialists: "A specialist agent — domain-specific deep work", matt: "Needs Matt's direct decision or input" } } } : preset === "risk" ? { risk } : { soundness };
+      } else {
+        assert(questions && typeof questions === "object" && !Array.isArray(questions) && Object.keys(questions).length > 0, "questions must be a non-empty object");
+        for (const [qid, question] of Object.entries(questions)) {
+          assert(qid.length > 0 && question && typeof question === "object", "Invalid question");
+          assert(["score", "choice"].includes(question.type) && typeof question.instructions === "string" && question.instructions.trim().length > 0, `Invalid question ${qid}`);
+          if (question.type === "score") {
+            assert(Array.isArray(question.criteria), `Score question ${qid} requires criteria`);
+            const range = question.instructions.match(/(\d+)\s*(?:to|[-–])\s*(\d+)/i);
+            assert(range, `Score question ${qid} instructions must state a numeric scale`);
+            assert(question.criteria.length === Number(range[2]) - Number(range[1]) + 1, `Score question ${qid} criteria length does not match its stated scale`);
+          } else assert(question.criteria && typeof question.criteria === "object" && !Array.isArray(question.criteria), `Choice question ${qid} requires criteria`);
+        }
+      }
+      const confidence = b.agentConfidence === undefined ? null : z.number().min(0).max(1).parse(b.agentConfidence);
+      const config = this.require("config", "bis");
+      const hour = 60 * 60 * 1000, day = 24 * hour, at = stamp();
+      const entries = this.s.list("jev_ledger", 100000).filter(x => x.adHoc && x.createdAt && Number.isFinite(Date.parse(x.createdAt)));
+      const agentRecent = entries.filter(x => x.agentId === a.id && at - Date.parse(x.createdAt) < hour);
+      const crewRecent = entries.filter(x => at - Date.parse(x.createdAt) < day);
+      const agentLimit = Number.isFinite(config.jevAdHocPerAgentHour) ? config.jevAdHocPerAgentHour : 20;
+      const crewLimit = Number.isFinite(config.jevAdHocCrewPerDay) ? config.jevAdHocCrewPerDay : 200;
+      if (agentRecent.length >= agentLimit || crewRecent.length >= crewLimit) {
+        const retry = Math.max(1, Math.ceil(((agentRecent.length >= agentLimit ? Math.min(...agentRecent.map(x => Date.parse(x.createdAt))) + hour : at) - at) / 1000), Math.ceil(((crewRecent.length >= crewLimit ? Math.min(...crewRecent.map(x => Date.parse(x.createdAt))) + day : at) - at) / 1000));
+        throw new Fault("Jev ad-hoc rate limit exceeded", 429, { retry_after: retry });
+      }
+      const entry = this.createJevEntry({ agentId: a.id, workId: null, tier: b.tier === undefined ? "L3" : z.string().min(1).max(40).parse(b.tier), type: "ad-hoc", recommendation: detail, approvalId: null, agentConfidence: confidence, questions, adHoc: true });
+      entry.idempotencyKey = key;
+      this.s.put("jev_ledger", entry);
+      this.s.event(a.id, "jev.judgment_requested", entry.id, { preset: b.questions ? "custom" : preset });
+      return { ledgerId: entry.id, status: "scoring" };
+    }
+    if (action === "get_jev_judgment") {
+      const ledgerId = z.string().min(1).parse(b.ledger_id);
+      const entry = this.s.get("jev_ledger", ledgerId);
+      assert(entry && entry.adHoc && entry.agentId === a.id, "Jev judgment not found", 403);
+      return { ledgerId: entry.id, status: entry.status, jevScore: entry.jevScore, jevConfidence: entry.jevConfidence, jevRecommendation: entry.jevRecommendation, agreement: entry.agreement, disagreement: entry.disagreement, ...(entry.status === "unscored" ? { scoringError: entry.scoringError || null } : {}) };
+    }
     if (action === "poll_commands")
       return this.s
         .active("command")

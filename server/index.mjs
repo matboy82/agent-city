@@ -177,6 +177,7 @@ export async function createApp({
                   .slice(0, 3)
                   .join("; ")
               : e.message,
+        ...(e.retry_after !== undefined ? { retry_after: e.retry_after } : {}),
       });
     }
   });
