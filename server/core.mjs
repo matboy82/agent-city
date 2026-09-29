@@ -372,7 +372,7 @@ export class Core {
       verdict: { type: "choice", instructions: "Should Jev agree with the recommendation?", criteria: { agree: "Recommendation is sound", disagree: "Recommendation is unsound" } },
     } : { soundness: { type: "score", instructions: "Score judgment soundness from 0 (unsound) to 10 (excellent), and provide confidence.", criteria: ["unsound", "very weak", "weak", "weak-mixed", "mixed", "sound", "mostly sound", "very sound", "near-excellent", "excellent"] } });
     const work = this.s.get("work", workId);
-    this.enqueue("jev", adHoc ? "jev.score" : "work.start", workId || null, { scoring: true, ledgerId: entry.id, title: `${tier} ${type} scoring`, detail: entry.recommendation, state: { objective: work?.contract?.objective || "", constraints: work?.contract?.constraints || [], tier }, questions }, `jev-score:${entry.id}`);
+    this.enqueue("jev", (!workId || adHoc) ? "jev.score" : "work.start", workId || null, { scoring: true, ledgerId: entry.id, title: `${tier} ${type} scoring`, detail: entry.recommendation, state: { objective: work?.contract?.objective || "", constraints: work?.contract?.constraints || [], tier }, questions }, `jev-score:${entry.id}`);
     return entry;
   }
   recordJevFailure(entry, error) {
@@ -1221,6 +1221,7 @@ export class Core {
             createdAt: now(),
           };
           this.s.put("queue", r);
+          this.enqueue("dave", "agenda.task", null, { action: "agenda.task", brief: r.text, queueId: r.id }, `agenda-task:${r.id}`);
           break;
         case "remove_queue_item":
           r = this.require("queue", b.id);
