@@ -1849,6 +1849,10 @@ export class Core {
         }
         c.status = b.status; c.result = typeof b.result === "string" ? b.result.slice(0, 2000) : null; c.updatedAt = now(); this.s.put("command", c); return c;
       }
+      if (c.verb === "jev.score") {
+        // Ad-hoc scoring has no work item (workId is null); just track command status.
+        c.status = b.status; c.updatedAt = now(); this.s.put("command", c); return c;
+      }
       const w = this.require("work", c.workId);
       if (b.status === "completed" || b.status === "failed") {
         const receiptText = run.result || "";
