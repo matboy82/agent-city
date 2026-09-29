@@ -1220,6 +1220,7 @@ export class Core {
             createdAt: now(),
           };
           this.s.put("queue", r);
+          this.enqueue("dave", "agenda.task", null, { action: "agenda.task", brief: r.text, queueId: r.id }, `agenda-task:${r.id}`);
           break;
         case "remove_queue_item":
           r = this.require("queue", b.id);

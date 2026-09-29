@@ -69,7 +69,7 @@ export async function handle(command, { adapter, shouldStop }) {
         "Resume acknowledged. A paused execution must be retried from its durable context.",
     };
   if (
-    !["work.start", "message.deliver", "handoff.accept"].includes(command.verb)
+    !["work.start", "message.deliver", "handoff.accept", "agenda.task"].includes(command.verb)
   )
     throw new Error("Unsupported Hermes command");
   if (command.verb === "handoff.accept")
@@ -192,7 +192,12 @@ export async function handle(command, { adapter, shouldStop }) {
     brief: command.payload?.brief || command.payload?.body,
     context: command.payload?.context,
   };
+  const agendaPrefix =
+    command.verb === "agenda.task"
+      ? "AGENDA TASK from Matt's Crew OS Today queue. This is a direct task from Matt: do it yourself or coordinate the right specialist, then confirm completion to Matt with the message_owner tool (short, plain colleague language, no file paths or ticket codes). If the task needs Matt's decision or approval before acting, file a request_approval card instead of doing it. The queue row stays on his agenda as his checklist; do not try to remove it.\n\n"
+      : "";
   child.stdin.end(
+      agendaPrefix +
       "Crew OS owner-authorized work packet. Read and follow the BIS workspace AGENTS.md and its startup sequence before substantive work. Remain within BIS scope; do not access personal cognition. Honor existing runtime approval boundaries. Return actual results; back work deliverables with evidence references per AAFE/AQM standards. For work.start, follow the supplied task contract. In the final report include each done_when condition exactly, marked 'met' or 'not met', followed by evidence; also include CHANGED, RISKS, and APPROVAL NEEDED. Do not report a condition met without evidence. In conversational replies to Matt, use plain colleague language - never append 'Canonical references' footers and never dump file paths, ticket codes, QA IDs, or test names into chat. Your contract carries a retry_budget (attempts, minutes, spend, destructive scope). When a tool call fails, the harness automatically retries inside that budget: timeouts, bad arguments, and missing context are retried; permission denials and conflicting requirements stop and escalate. Do not hammer a failing tool yourself; report the failure, its class if known, and how many attempts were used. Do not claim work you did not perform.\n\n" +
       JSON.stringify(context),
   );
