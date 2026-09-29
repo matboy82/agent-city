@@ -60,6 +60,15 @@ export const workSchema = z
   .object({
     title: z.string().trim().min(1).max(160),
     brief: text,
+    contract: z.object({
+      objective: z.string().trim().min(1).max(500),
+      inputs: z.array(z.string().trim().min(1).max(500)).max(30),
+      constraints: z.array(z.string().trim().min(1).max(500)).max(30),
+      deliverable: z.string().trim().min(1).max(1000),
+      done_when: z.array(z.string().trim().min(1).max(500)).min(1).max(30),
+      approval_required: z.array(z.string().trim().min(1).max(500)).max(30).default([]),
+      retry_budget: z.object({ attempts: z.number().int().min(1).max(3).default(3), elapsed_minutes: z.number().int().min(1).max(10).default(10), spend: z.number().nonnegative().default(0), destructive_scope: z.string().max(500).default("None") }).strict().default({}),
+    }).strict(),
     priority: z.enum(["low", "normal", "high", "urgent"]),
     goalId: key,
     parentId: key.nullable().optional(),

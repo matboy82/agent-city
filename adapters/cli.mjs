@@ -88,6 +88,7 @@ export class Adapter {
       ...(metadata.exitReason ? { exit_reason: metadata.exitReason } : {}),
       ...(metadata.errorLines ? { error_lines: metadata.errorLines.slice(0, 1000) } : {}),
       ...(metadata.tokens ? { tokens: metadata.tokens } : {}),
+      ...(metadata.failureClass ? { failure_class: metadata.failureClass } : {}),
     });
   }
   async process(command, handler) {
@@ -118,7 +119,29 @@ export class Adapter {
       });
     }, 30000);
     try {
-      const result = await handler(command, {
+      let result;
+      if (command.verb === "work.start") {
+        const policy = retryPolicy(command.payload?.contract?.retry_budget);
+        const started = Date.now();
+        for (let attempt = 1; ; attempt++) {
+          try {
+            result = await handler(command, { runId, adapter: this, shouldStop: () => !!leaseError });
+            break;
+          } catch (error) {
+            const failureClass = classifyFailure(error);
+            this.state.commands[command.id] = { state: "executing", runId, attempts: attempt, failureClass, lastError: String(error.message || error).slice(0, 500) };
+            await this.save();
+            if (!retryAllowed(failureClass, attempt, policy, Date.now() - started)) {
+              error.failureClass = failureClass;
+              error.retryAttempts = attempt;
+              throw error;
+            }
+            const delay = Math.min(5000, 500 * 2 ** (attempt - 1));
+            await new Promise((resolveWait) => setTimeout(resolveWait, delay));
+            if (leaseError) throw leaseError;
+          }
+        }
+      } else result = await handler(command, {
         runId,
         adapter: this,
         shouldStop: () => !!leaseError,
@@ -154,7 +177,7 @@ export class Adapter {
           "failed",
           runId,
           "Runtime stopped without a verified result; reconcile external effects before retry.",
-          { exitReason: e.code === "BUDGET_EXCEEDED" ? "budget_exceeded" : "error", budgetSeconds: e.budgetSeconds, errorLines: e.message },
+          { exitReason: e.code === "BUDGET_EXCEEDED" ? "budget_exceeded" : "error", budgetSeconds: e.budgetSeconds, errorLines: `class=${e.failureClass || classifyFailure(e)} attempts=${e.retryAttempts || 1}; ${e.message}`, failureClass: e.failureClass || classifyFailure(e) },
         );
       } catch {
         // Keep the local uncertain record if the server cannot accept the failure.
@@ -166,6 +189,30 @@ export class Adapter {
   }
 }
 const [mode, url, agentId, code] = process.argv.slice(2);
+export function classifyFailure(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  if (error?.code === "BUDGET_EXCEEDED" || /timed? ?out|timeout|deadline/.test(message)) return "TOOL_TIMEOUT";
+  if (/permission denied|forbidden|not authorized|403/.test(message)) return "PERMISSION_DENIED";
+  if (/invalid argument|bad request|422|400/.test(message)) return "INVALID_ARGUMENTS";
+  if (/not found|missing (file|context|source)|enoent/.test(message)) return "MISSING_CONTEXT";
+  if (/test failed|check failed|verification failed|assertion/.test(message)) return "FAILED_CHECK";
+  if (/conflict|contradict|incompatible requirements/.test(message)) return "CONFLICTING_REQUIREMENTS";
+  return "UNCHANGED_REPEATED_FAILURE";
+}
+export function retryPolicy(budget = {}) {
+  return {
+    attempts: Math.min(3, Math.max(1, Number.isInteger(budget.attempts) ? budget.attempts : 3)),
+    elapsedMs: Math.min(10, Math.max(1, Number.isInteger(budget.elapsed_minutes) ? budget.elapsed_minutes : 10)) * 60_000,
+    maxSpend: Number.isFinite(budget.spend) ? Math.max(0, budget.spend) : 0,
+  };
+}
+export function retryAllowed(failureClass, attempt, policy, elapsedMs) {
+  if (attempt >= policy.attempts || elapsedMs >= policy.elapsedMs) return false;
+  if (failureClass === "TOOL_TIMEOUT") return true;
+  if (["INVALID_ARGUMENTS", "MISSING_CONTEXT"].includes(failureClass)) return attempt < 1;
+    if (failureClass === "FAILED_CHECK") return attempt <= 2;
+  return false;
+}
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === resolve(import.meta.filename)

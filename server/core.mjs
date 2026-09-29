@@ -22,6 +22,7 @@ import {
 import { createHarness } from "./harness.mjs";
 const terminal = ["completed", "failed", "expired", "canceled"];
 const stamp = () => Date.now();
+const receiptField = (text, field) => text.match(new RegExp(`(?:^|\\n)\\s*${field}\\s*:\\s*([^\\n]+)`, "i"))?.[1]?.trim() || null;
 const denverMonth = (value) => {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Denver",
@@ -50,6 +51,12 @@ export class Core {
       "This record changed. Refresh before saving.",
       409,
     );
+  }
+  receiptBrief() {
+    const work = this.s.list("work", 100000);
+    const receipts = work.flatMap(w => (w.receipts || []).map(receipt => ({ workId: w.id, title: w.title, ...receipt }))).sort((a,b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
+    const improvements = work.filter(w => w.harnessImprovementFor && !["done", "canceled"].includes(w.status)).map(w => ({ id: w.id, title: w.title, status: w.status, owner: w.raci?.responsible?.[0] || "dave" }));
+    return { generatedAt: now(), source: "run_receipts", receipts, openHarnessImprovements: improvements };
   }
   owner(token) {
     const s = this.s.get("session", hash(token || ""));
@@ -160,6 +167,7 @@ export class Core {
       cityAssets: this.s.list("city_asset"),
       work: this.s.list("work"),
       runs: this.s.list("run"),
+      receiptBrief: this.receiptBrief(),
       commands: this.s.list("command"),
       approvals: this.s.list("approval"),
       handoffs: this.s.list("handoff"),
@@ -378,6 +386,8 @@ export class Core {
     });
   }
   dispatch(w, agentId, idem) {
+    if (!w.contract || !w.contract.objective || !w.contract.deliverable || !w.contract.done_when?.length)
+      throw new Fault("Work contract requires objective, deliverable, and at least one done_when condition", 400);
     const prior = this.s.commandByKey(idem);
     const existing = prior ? JSON.parse(prior) : null;
     if (existing) {
@@ -472,6 +482,8 @@ export class Core {
       w.id,
       {
         brief: w.brief,
+        contract: w.contract,
+        receiptRequired: true,
         capability: w.capability,
         scope: w.scope,
         action: w.action,
@@ -484,6 +496,7 @@ export class Core {
     if (action === "get_dashboard" || action === "get_hq_snapshot")
       return this.snapshot();
     if (action === "get_harness_analytics") return this.harness.analytics();
+    if (action === "get_receipt_brief") return this.receiptBrief();
     if (action === "get_events")
       return this.s.events(
         String(b.search || "").slice(0, 100),
@@ -515,6 +528,7 @@ export class Core {
             policyRevision: 0,
             createdAt: now(),
             paused: false,
+            receipts: [],
           };
           this.s.put("work", r);
           if (["send", "publish", "merge", "spend"].includes(r.action))
@@ -1572,6 +1586,7 @@ export class Core {
           );
           r.title = z.string().min(1).max(160).parse(b.title);
           r.brief = z.string().min(1).max(2000).parse(b.brief);
+          if (b.contract) r.contract = workSchema.shape.contract.parse(b.contract);
           r.priority = z
             .enum(["low", "normal", "high", "urgent"])
             .parse(b.priority);
@@ -1635,7 +1650,7 @@ export class Core {
           const brief = z.string().trim().min(1).max(2000).parse(b.brief) + `\n\nWorkflow: ${template.name}. Completion: ${template.completionCriteria}. Steps: ${template.steps.map((s,i)=>`${i+1}. ${s.agentId}: ${s.handoff}`).join("; ")}. Maximum loops: ${template.maxLoops}.`;
           const steps = structuredClone(template.steps);
           steps[0].agentId = agentId;
-          const work = { id:id(), title, brief, priority:"normal", goalId, raci:{responsible:[agentId],accountable:"matt",consulted:[],informed:[]}, capability:"work.execute", scope:"bis", action:"read", status:"planned", revision:0, policyRevision:0, createdAt:now(), paused:false, templateId:template.id, templateProgress:steps.map((s,i)=>({step:i+1,agentId:s.agentId,status:i === 0 ? "dispatched" : "queued"})) };
+          const work = { id:id(), title, brief, contract: { objective: title, inputs: ["BIS workspace context", "Workflow instructions"], constraints: ["BIS only", "Honor owner approval boundaries"], deliverable: template.completionCriteria, done_when: [template.completionCriteria], approval_required: [] }, priority:"normal", goalId, raci:{responsible:[agentId],accountable:"matt",consulted:[],informed:[]}, capability:"work.execute", scope:"bis", action:"read", status:"planned", revision:0, policyRevision:0, createdAt:now(), paused:false, receipts:[], templateId:template.id, templateProgress:steps.map((s,i)=>({step:i+1,agentId:s.agentId,status:i === 0 ? "dispatched" : "queued"})) };
           this.s.put("work",work);
           r = {id:id(),templateId:template.id,workId:work.id,status:"running",currentStep:1,loopCount:1,progress:work.templateProgress,createdAt:now()};
           this.s.put("workflow",r);
@@ -1707,6 +1722,7 @@ export class Core {
         status: "accepted",
         leaseUntil: new Date(stamp() + 120000).toISOString(),
         createdAt: now(),
+        failureClass: null,
       };
       this.s.put("run", r);
       c.runId = r.id;
@@ -1752,8 +1768,31 @@ export class Core {
       run.leaseUntil = new Date(stamp() + 120000).toISOString();
       run.result =
         typeof b.result === "string" ? b.result.slice(0, 2000) : null;
+      if (b.failure_class) run.failureClass = z.enum(["TOOL_TIMEOUT","INVALID_ARGUMENTS","MISSING_CONTEXT","FAILED_CHECK","PERMISSION_DENIED","CONFLICTING_REQUIREMENTS","UNCHANGED_REPEATED_FAILURE"]).parse(b.failure_class);
+      if (b.status === "failed" && !run.failureClass) run.failureClass = "UNCHANGED_REPEATED_FAILURE";
       this.s.put("run", run);
       const w = this.require("work", c.workId);
+      if (b.status === "completed" || b.status === "failed") {
+        const receiptText = run.result || "";
+        const verdict = (criterion) => {
+          const escaped = criterion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const match = receiptText.match(new RegExp(`(?:^|\\n)\\s*(?:[-*]\\s*)?${escaped}\\s*:\\s*(met|not met)\\b([^\\n]*)`, "i"));
+          return match ? { condition: criterion, status: match[1].toLowerCase(), evidence: match[2].trim() } : { condition: criterion, status: "not met", evidence: "No explicit status or evidence reported" };
+        };
+        const verified = (w.contract?.done_when || []).map(verdict);
+        const receipt = {
+          objective: w.contract?.objective || w.title,
+          changed: receiptField(receiptText, "CHANGED") || receiptText.slice(0, 1000) || "No change reported",
+          verified: verified.filter(x => x.status === "met"),
+          notVerified: verified.filter(x => x.status !== "met"),
+          risks: receiptField(receiptText, "RISKS") || "Not reported",
+          approvalNeeded: b.status === "failed" ? `Run failed (${run.failureClass}); owner review required before retry` : [receiptField(receiptText, "APPROVAL NEEDED"), ...(w.contract?.approval_required || [])].filter(Boolean).join("; ") || "None reported",
+          createdAt: now(),
+        };
+        w.receipts ||= [];
+        w.receipts.push({ ...receipt, runId: run.id });
+        run.receipt = receipt;
+      }
       w.status = {
         accepted: "claimed",
         running: "in_progress",
@@ -1768,6 +1807,17 @@ export class Core {
       }
       this.s.put("work", w);
       if (b.status === "completed") { c.status = "completed"; c.updatedAt = now(); this.s.put("command", c); }
+      if (b.status === "failed") {
+        w.status = "blocked";
+        const improvement = this.s.list("work").find(item => item.harnessImprovementFor === run.id) || {
+          id: id(), title: `Harness improvement: ${run.failureClass || "UNCLASSIFIED_FAILURE"} — ${w.title}`,
+          brief: `Review failed run ${run.id} for mission ${w.id}. Class: ${run.failureClass || "UNCLASSIFIED_FAILURE"}. Convert the failure into a durable harness improvement.`,
+          contract: { objective: "Prevent recurrence of this harness failure", inputs: [`Run ${run.id}`, `Mission ${w.id}`], constraints: ["BIS only"], deliverable: "A tested harness improvement or documented blocker", done_when: ["Failure cause identified", "Harness fix recorded or blocker explained"], approval_required: [] },
+          priority: "normal", goalId: w.goalId, raci: { responsible: ["dave"], accountable: "matt", consulted: [], informed: [] }, capability: "work.execute", scope: "bis", action: "test", status: "planned", revision: 0, policyRevision: 0, createdAt: now(), paused: false, receipts: [], harnessImprovementFor: run.id,
+        };
+        this.s.put("work", improvement);
+        run.harnessImprovementId = improvement.id;
+      }
       const templateAdvanced = b.status === "completed" ? this.advanceTemplate(w, run.result) : false;
       if (
         b.status === "completed" &&

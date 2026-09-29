@@ -36,6 +36,7 @@ export class Scheduler {
             id: id(),
             title: r.title,
             brief: r.brief,
+            contract: { objective: r.title, inputs: ["Routine definition", "BIS workspace context"], constraints: ["BIS only", "Owner dispatch required"], deliverable: r.brief, done_when: ["Routine deliverable is prepared"], approval_required: [] },
             priority: "normal",
             goalId: r.goalId,
             raci: {
@@ -52,6 +53,7 @@ export class Scheduler {
             policyRevision: 0,
             createdAt: now(),
             paused: false,
+            receipts: [],
             routineId: r.id,
           };
           this.core.s.put("work", w);
@@ -76,6 +78,10 @@ export class Scheduler {
       startedAt: now(),
       sources: [],
     };
+    if (reason === "schedule" || reason === "manual") {
+      result.receiptBrief = this.core.receiptBrief();
+      result.openHarnessImprovements = this.core.s.list("work").filter(w => w.harnessImprovementFor && !["done", "canceled"].includes(w.status)).map(w => ({ id: w.id, title: w.title, status: w.status, owner: w.raci?.responsible?.[0] || "dave" }));
+    }
     s.put("sync", result);
     try {
       const config = process.env.CREW_SYNC_CONFIG

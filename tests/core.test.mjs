@@ -33,6 +33,7 @@ function fixture() {
     call("create_work_item", {
       title: "Verified mission",
       brief: "Read BIS context and return evidence",
+      contract: { objective: "Return verified BIS evidence", inputs: ["BIS project context"], constraints: ["BIS only"], deliverable: "Evidence report", done_when: ["Evidence report exists"], approval_required: [] },
       priority: "normal",
       goalId: "monthly",
       raci: {
@@ -137,6 +138,21 @@ test("dispatch is idempotent and command/run/work states are distinct", () => {
   });
   assert.equal(f.s.get("work", w).status, "done");
   assert.throws(() => f.s.db.exec("DELETE FROM audit"), /immutable/);
+  f.s.close();
+});
+test("work contracts are required and failed runs are classified, receipted, and create Dave improvement work", () => {
+  const f = fixture();
+  assert.throws(() => f.call("create_work_item", { title: "No contract", brief: "x", priority: "normal", goalId: "monthly", raci: { responsible: ["dave"], accountable: "matt", consulted: [], informed: [] } }), /contract/i);
+  const workId = f.create();
+  const command = f.dispatch(workId);
+  f.dave.act("ack_command", { command_id: command.id, status: "accepted" });
+  f.dave.act("ack_command", { command_id: command.id, status: "running" });
+  f.dave.act("ack_command", { command_id: command.id, status: "failed", failure_class: "TOOL_TIMEOUT", result: "Timed out" });
+  const work = f.s.get("work", workId);
+  assert.equal(work.receipts[0].notVerified[0].status, "not met");
+  assert.equal(f.s.get("run", f.s.list("run")[0].id).failureClass, "TOOL_TIMEOUT");
+  const improvement = f.s.list("work").find((item) => item.harnessImprovementFor);
+  assert.equal(improvement.raci.responsible[0], "dave");
   f.s.close();
 });
 test("workflow templates automatically dispatch each next step without manual redispatch", () => {
@@ -537,6 +553,7 @@ test("redirection invalidates old policy approval and queues a fresh review", ()
   const w = f.call("create_work_item", {
     title: "Publish a result",
     brief: "Publish approved BIS work",
+    contract: { objective: "Publish approved BIS work", inputs: ["Approved source"], constraints: ["BIS only"], deliverable: "Published result", done_when: ["Result is published"], approval_required: ["Matt approval"] },
     priority: "normal",
     goalId: "monthly",
     action: "publish",
@@ -790,6 +807,7 @@ test("remove_agent cleans up the agent record and its references", () => {
   const wid = f.call("create_work_item", {
     title: "Doomed mission",
     brief: "Nothing to see here",
+    contract: { objective: "Review the mission", inputs: ["BIS context"], constraints: ["BIS only"], deliverable: "Review result", done_when: ["Review recorded"], approval_required: [] },
     priority: "low",
     goalId: "monthly",
     raci: {

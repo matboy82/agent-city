@@ -331,7 +331,7 @@ function briefDock() {
   }${button("Open focused brief ?", "nav", 'data-view="brief"', "text-button")}</div></aside>`;
 }
 function morningBrief() {
-  return `<aside class="brief"><div class="row"><span class="eyebrow">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", weekday: "long", month: "short", day: "numeric" }).format(new Date())}</span>${button("?", "sync", 'aria-label="Refresh morning brief"', "icon-button")}</div><h2>Morning Brief<span class="blue">.</span></h2><div class="brief-numbers"><div><strong>${data.agents.filter((a: Row) => a.connection === "Connected" && a.status === "active").length}</strong><small>active agents</small></div><div><strong>${pending().length}</strong><small>need you</small></div><div><strong>${data.queue.length}</strong><small>on the agenda</small></div></div><div class="section-title"><h3>Waiting on you</h3><span>${pending().length.toString().padStart(2, "0")}</span></div>${reviewCards(2)}<div class="section-title"><h3>Queued for today</h3>${button(icon("plus"), "add-queue", 'aria-label="Add queue item"', "icon-button")}</div><div class="queue-list">${
+  return `<aside class="brief"><div class="row"><span class="eyebrow">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", weekday: "long", month: "short", day: "numeric" }).format(new Date())}</span>${button("?", "sync", 'aria-label="Refresh morning brief"', "icon-button")}</div><h2>Morning Brief<span class="blue">.</span></h2><div class="brief-numbers"><div><strong>${data.agents.filter((a: Row) => a.connection === "Connected" && a.status === "active").length}</strong><small>active agents</small></div><div><strong>${pending().length}</strong><small>need you</small></div><div><strong>${data.queue.length}</strong><small>on the agenda</small></div></div><div class="section-title"><h3>Waiting on you</h3><span>${pending().length.toString().padStart(2, "0")}</span></div>${reviewCards(2)}<section class="receipt-brief"><h3>Recent run receipts</h3>${(data.receiptBrief?.receipts || []).slice(0, 3).map((r: Row) => `<p><strong>${e(r.title)}</strong> · ${r.notVerified?.length ? `${r.notVerified.length} checks not verified` : `${r.verified?.length || 0} checks verified`}</p>`).join("") || '<p class="muted">No completed runs have receipts yet.</p>'}<h3>Harness improvements for Dave</h3>${(data.receiptBrief?.openHarnessImprovements || []).slice(0, 3).map((w: Row) => `<p>${e(w.title)} · ${e(w.status)}</p>`).join("") || '<p class="muted">No open improvement tasks.</p>'}</section><div class="section-title"><h3>Queued for today</h3>${button(icon("plus"), "add-queue", 'aria-label="Add queue item"', "icon-button")}</div><div class="queue-list">${
     data.queue
       .slice(0, 6)
       .map(
@@ -1626,6 +1626,13 @@ document.addEventListener("click", async (ev) => {
         "Create mission",
         input("title", "Mission title") +
           '<label>Brief<textarea name="brief" required maxlength="2000" placeholder="The smallest context needed to do good work"></textarea></label>' +
+          '<h3>Task contract</h3>' +
+          '<label>Objective<input name="objective" required maxlength="500"></label>' +
+          '<label>Inputs (one per line)<textarea name="contractInputs" required></textarea></label>' +
+          '<label>Constraints (one per line)<textarea name="constraints" required placeholder="BIS only\nNo personal cognition\n$0 spend"></textarea></label>' +
+          '<label>Deliverable<input name="deliverable" required maxlength="1000"></label>' +
+          '<label>Done when (one checkable condition per line)<textarea name="done_when" required></textarea></label>' +
+          '<label>Approval required (one per line)<textarea name="approval_required" placeholder="Matt approval before sending"></textarea></label>' +
           select(
             "goalId",
             "Goal",
@@ -1665,6 +1672,14 @@ document.addEventListener("click", async (ev) => {
           await api("create_work_item", {
             title: f.get("title"),
             brief: f.get("brief"),
+            contract: {
+              objective: f.get("objective"),
+              inputs: String(f.get("contractInputs") || "").split("\n").map((x) => x.trim()).filter(Boolean),
+              constraints: String(f.get("constraints") || "").split("\n").map((x) => x.trim()).filter(Boolean),
+              deliverable: f.get("deliverable"),
+              done_when: String(f.get("done_when") || "").split("\n").map((x) => x.trim()).filter(Boolean),
+              approval_required: String(f.get("approval_required") || "").split("\n").map((x) => x.trim()).filter(Boolean),
+            },
             goalId: f.get("goalId"),
             priority: f.get("priority"),
             capability: f.get("capability"),
@@ -1708,7 +1723,7 @@ document.addEventListener("click", async (ev) => {
       const w = data.work.find((w: Row) => w.id === id);
       modal(
         e(w.title),
-        `<p>${e(w.brief)}</p><div class="row">${badge(w.status)}<span>Revision ${w.revision}</span></div><h3>Responsibility</h3><dl>${Object.entries(
+        `<p>${e(w.brief)}</p><div class="row">${badge(w.status)}<span>Revision ${w.revision}</span></div><h3>Task contract</h3>${w.contract ? `<p><strong>Objective:</strong> ${e(w.contract.objective)}</p><p><strong>Deliverable:</strong> ${e(w.contract.deliverable)}</p><p><strong>Inputs:</strong> ${e((w.contract.inputs || []).join(" · "))}</p><p><strong>Constraints:</strong> ${e((w.contract.constraints || []).join(" · "))}</p><p><strong>Retry budget:</strong> ${(w.contract.retry_budget?.attempts || 3)} attempts / ${(w.contract.retry_budget?.elapsed_minutes || 10)} minutes · max spend $${w.contract.retry_budget?.spend || 0} · destructive scope: ${e(w.contract.retry_budget?.destructive_scope || "None")}</p><ul>${(w.contract.done_when || []).map((x: string) => `<li>${e(x)}</li>`).join("")}</ul><p><strong>Approval required:</strong> ${e((w.contract.approval_required || []).join(" · ") || "None specified")}</p>` : '<p class="warning">Legacy work item has no contract.</p>'}<h3>Run receipts</h3>${(w.receipts || []).map((r: Row) => `<article class="command-row"><strong>${e(r.objective)}</strong><p>Changed: ${e(r.changed)}</p><p>Verified: ${e((r.verified || []).map((x: Row) => `${x.condition}: ${x.evidence}`).join("; ") || "None")}</p><p>Not verified: ${e((r.notVerified || []).map((x: Row) => `${x.condition}: ${x.evidence}`).join("; ") || "None")}</p><p>Risks: ${e(r.risks)}</p><p>Approval needed: ${e(r.approvalNeeded)}</p></article>`).join("") || '<p class="muted">No run receipts yet.</p>'}<h3>Responsibility</h3><dl>${Object.entries(
           w.raci,
         )
           .map(

@@ -188,11 +188,12 @@ export async function handle(command, { adapter, shouldStop }) {
     idempotency_key: command.idempotencyKey,
     action: command.payload?.action || "message",
     scope: "bis",
+    contract: command.payload?.contract || null,
     brief: command.payload?.brief || command.payload?.body,
     context: command.payload?.context,
   };
   child.stdin.end(
-    "Crew OS owner-authorized work packet. Read and follow the BIS workspace AGENTS.md and its startup sequence before substantive work. Remain within BIS scope; do not access personal cognition. Honor existing runtime approval boundaries. Return actual results; back work deliverables with evidence references per AAFE/AQM standards. In conversational replies to Matt, use plain colleague language - never append 'Canonical references' footers and never dump file paths, ticket codes, QA IDs, or test names into chat. Do not claim work you did not perform.\n\n" +
+      "Crew OS owner-authorized work packet. Read and follow the BIS workspace AGENTS.md and its startup sequence before substantive work. Remain within BIS scope; do not access personal cognition. Honor existing runtime approval boundaries. Return actual results; back work deliverables with evidence references per AAFE/AQM standards. For work.start, follow the supplied task contract. In the final report include each done_when condition exactly, marked 'met' or 'not met', followed by evidence; also include CHANGED, RISKS, and APPROVAL NEEDED. Do not report a condition met without evidence. In conversational replies to Matt, use plain colleague language - never append 'Canonical references' footers and never dump file paths, ticket codes, QA IDs, or test names into chat. Do not claim work you did not perform.\n\n" +
       JSON.stringify(context),
   );
   try {
