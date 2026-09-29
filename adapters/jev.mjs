@@ -36,6 +36,7 @@ function defaultQuestions(work) {
 
 export async function handle(command, { adapter }) {
   const verb = command.verb;
+  if (verb === "status.probe") return { status: "idle", current_task: null, queue: [], activity: [], current_activity: null };
   if (!["work.start", "message.deliver", "handoff.accept"].includes(verb)) {
     throw new Error("Unsupported Jev command: " + verb);
   }
