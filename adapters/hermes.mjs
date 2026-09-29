@@ -192,7 +192,7 @@ export async function handle(command, { adapter, shouldStop }) {
     context: command.payload?.context,
   };
   child.stdin.end(
-    "Crew OS owner-authorized work packet. Read and follow the BIS workspace AGENTS.md and its startup sequence before substantive work. Remain within BIS scope; do not access personal cognition. Honor existing runtime approval boundaries. Return actual results and canonical evidence references. Do not claim work you did not perform.\n\n" +
+    "Crew OS owner-authorized work packet. Read and follow the BIS workspace AGENTS.md and its startup sequence before substantive work. Remain within BIS scope; do not access personal cognition. Honor existing runtime approval boundaries. Return actual results; back work deliverables with evidence references per AAFE/AQM standards. In conversational replies to Matt, use plain colleague language - never append 'Canonical references' footers and never dump file paths, ticket codes, QA IDs, or test names into chat. Do not claim work you did not perform.\n\n" +
       JSON.stringify(context),
   );
   try {
