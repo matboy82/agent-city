@@ -2261,13 +2261,18 @@ export class Core {
       return { ok: true, sequence: a.sequence };
     }
     if (action === "request_approval") {
-      const w = this.require("work", b.workId);
-      assert(
-        w.raci.responsible.includes(a.id),
-        "Only Responsible agent may request review",
-        403,
-      );
+      const w = b.workId === undefined ? null : this.require("work", b.workId);
+      if (w) {
+        assert(
+          w.raci.responsible.includes(a.id),
+          "Only Responsible agent may request review",
+          403,
+        );
+      } else {
+        assert(a.id === "dave", "Standalone approvals are Chief of Staff only", 403);
+      }
       if (b.runId) {
+        assert(w, "runId requires workId", 400);
         const run = this.require("run", b.runId);
         assert(
           run.agentId === a.id && run.workId === w.id,
@@ -2277,7 +2282,7 @@ export class Core {
       }
       const approval = {
         id: a.id + ":" + z.string().min(8).max(100).parse(b.idempotency_key),
-        workId: w.id,
+        workId: w ? w.id : null,
         runId: b.runId || null,
         kind: z.enum(["MERGE", "DECISION", "ANSWER", "WATCH"]).parse(b.kind),
         requestedBy: a.id,
@@ -2295,18 +2300,20 @@ export class Core {
       if (old) return old;
       this.s.put("approval", approval);
       if (approval.tier === "L1" || approval.kind === "DECISION") {
-        const entry = this.createJevEntry({ agentId: a.id, workId: w.id, tier: "L1", type: "recommendation", recommendation: approval.artifact || approval.context, approvalId: approval.id, agentConfidence: typeof b.confidence === "number" ? b.confidence : null });
+        const entry = this.createJevEntry({ agentId: a.id, workId: w ? w.id : null, tier: "L1", type: "recommendation", recommendation: approval.artifact || approval.context, approvalId: approval.id, agentConfidence: typeof b.confidence === "number" ? b.confidence : null });
         approval.jevLedgerId = entry.id;
         this.s.put("approval", approval);
       }
       if (approval.tier === "L2" || approval.tier === "L3") {
-        const entry = this.createJevEntry({ agentId: a.id, workId: w.id, tier: approval.tier, type: "judgment", recommendation: approval.artifact || approval.context, approvalId: approval.id, agentConfidence: typeof b.confidence === "number" ? b.confidence : null });
+        const entry = this.createJevEntry({ agentId: a.id, workId: w ? w.id : null, tier: approval.tier, type: "judgment", recommendation: approval.artifact || approval.context, approvalId: approval.id, agentConfidence: typeof b.confidence === "number" ? b.confidence : null });
         approval.jevLedgerId = entry.id; this.s.put("approval", approval);
       }
-      w.status = "waiting_approval";
-      w.revision++;
-      this.s.put("work", w);
-      this.s.event(a.id, "approval.requested", approval.id, { workId: w.id });
+      if (w) {
+        w.status = "waiting_approval";
+        w.revision++;
+        this.s.put("work", w);
+      }
+      this.s.event(a.id, "approval.requested", approval.id, { workId: w ? w.id : null });
       return approval;
     }
     if (action === "submit_artifact") {

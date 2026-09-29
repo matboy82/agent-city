@@ -8,5 +8,6 @@
       - crew-data:/data
     environment:
       CREW_ORIGIN: ${CREW_ORIGIN:-http://localhost:4310}
+      CREW_CALENDAR_FILE: ${CREW_CALENDAR_FILE:-/data/bis-calendar.json}
 volumes:
   crew-data:

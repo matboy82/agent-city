@@ -93,6 +93,53 @@ const TOOLS = [
       required: ["body"],
     },
   },
+  {
+    name: "request_approval",
+    description:
+      "File an approval card for Matt in the Crew OS 'Waiting on you' section. " +
+      "Use this for every decision or watch item Matt owns that surfaces in your work: blockers Matt owns, items needing his approval " +
+      "(outreach recipients/wording, government teaming paths, commit reviews), and status confirmations (e.g. SBA VetCert). " +
+      "The card stays in 'Waiting on you' until Matt resolves it. " +
+      "Omit workId for standalone Chief-of-Staff items (no work item needed). " +
+      "ALWAYS pass a stable idempotency_key per logical item (e.g. 'watch-warm-outreach') so re-filing never duplicates; " +
+      "include a date or version in the key when it is genuinely a NEW instance of a recurring item. " +
+      "Kinds: DECISION (needs Matt's call), WATCH (FYI / monitor), ANSWER (needs info), MERGE (code review).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Short card title, e.g. 'Approve warm-outreach recipients'. Max 160 chars.",
+        },
+        context: {
+          type: "string",
+          description: "What Matt needs to know to decide — the evidence and options. Max 2000 chars.",
+        },
+        effect: {
+          type: "string",
+          description: "What happens if he approves / what is blocked until he decides. Max 1000 chars.",
+        },
+        kind: {
+          type: "string",
+          enum: ["DECISION", "WATCH", "ANSWER", "MERGE"],
+          description: "DECISION = needs his call; WATCH = monitor; ANSWER = needs info; MERGE = code review.",
+        },
+        artifact: {
+          type: "string",
+          description: "Optional supporting text (draft wording, commit list, etc.). Max 10000 chars.",
+        },
+        tier: {
+          type: "string",
+          description: "Optional Jev tier: L1, L2, L3. DECISION items are scored automatically.",
+        },
+        idempotency_key: {
+          type: "string",
+          description: "Required, min 8 chars. Same key = same card; safe to re-file.",
+        },
+      },
+      required: ["title", "context", "effect", "kind", "idempotency_key"],
+    },
+  },
 ];
 
 function respond(id, result) {
@@ -108,7 +155,7 @@ async function handleToolCall(params) {
   const tool = TOOLS.find((t) => t.name === params.name);
   if (!tool) throw new Error(`Unknown tool: ${params.name}`);
   const args = params.arguments || {};
-  const action = params.name === "publish_brief" ? "publish_brief" : "message_owner";
+  const action = params.name;
   const result = await crewCall(action, args);
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
 }

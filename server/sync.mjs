@@ -198,6 +198,64 @@ export class Scheduler {
             });
           },
         ]);
+      if (process.env.CREW_CALENDAR_FILE)
+        providers.push([
+          "BIS Calendar file",
+          async () => {
+            const raw = await readFile(process.env.CREW_CALENDAR_FILE, "utf8");
+            if (Buffer.byteLength(raw) > 100000)
+              throw new Error("Calendar file too large");
+            const items = JSON.parse(raw);
+            if (!Array.isArray(items) || items.length > 100)
+              throw new Error("Invalid calendar file");
+            const rows = [];
+            for (const e of items) {
+              if (
+                typeof e.id !== "string" ||
+                typeof e.summary !== "string" ||
+                !e.start ||
+                !Number.isFinite(Date.parse(e.start))
+              )
+                continue;
+              const p = denverParts(new Date(e.start));
+              rows.push({
+                id: `calfile:${e.id}`,
+                category: "agenda",
+                text: (e.summary || "Calendar event").slice(0, 240),
+                timeLabel: e.allDay ? "All day" : `${p.hour}:${p.minute}`,
+                group: "BIS",
+                start: e.start,
+                end: e.end && Number.isFinite(Date.parse(e.end)) ? e.end : null,
+                createdAt: now(),
+              });
+            }
+            for (const row of rows) {
+              if (!row.start || !row.end) continue;
+              row.conflicts = rows
+                .filter(
+                  (other) =>
+                    other.id !== row.id &&
+                    other.start &&
+                    other.end &&
+                    Date.parse(other.start) < Date.parse(row.end) &&
+                    Date.parse(other.end) > Date.parse(row.start),
+                )
+                .map((other) => other.id);
+              row.tightTransition = rows.some(
+                (other) =>
+                  other.id !== row.id &&
+                  other.start &&
+                  Date.parse(other.start) >= Date.parse(row.end) &&
+                  Date.parse(other.start) - Date.parse(row.end) < 900000,
+              );
+            }
+            s.tx(() => {
+              for (const row of s.list("queue"))
+                if (row.category === "agenda") s.remove("queue", row.id);
+              for (const row of rows) s.put("queue", row);
+            });
+          },
+        ]);
       if (config.calendarIds?.length && process.env.GOOGLE_ACCESS_TOKEN)
         providers.push([
           "Google Calendar",
