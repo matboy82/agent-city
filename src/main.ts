@@ -786,6 +786,17 @@ function project() {
 }
 
 async function render(preserveWorld = false) {
+  const pageScrollY = window.scrollY;
+  const elementScroll = Array.from(document.querySelectorAll<HTMLElement>("body *"))
+    .filter((el) => {
+      const style = getComputedStyle(el);
+      return el.scrollHeight > el.clientHeight && /(auto|scroll)/.test(style.overflowY) && (el.id || el.classList.length > 0);
+    })
+    .map((el) => {
+      const selector = el.id ? `#${CSS.escape(el.id)}` : `.${Array.from(el.classList).map(name => CSS.escape(name)).join(".")}`;
+      const matches = Array.from(document.querySelectorAll<HTMLElement>(selector));
+      return { selector, index: matches.indexOf(el), top: el.scrollTop, left: el.scrollLeft };
+    });
   mobile = mobileQuery.matches;
   if (mobile) {
     navCollapsed = false;
@@ -855,6 +866,14 @@ async function render(preserveWorld = false) {
     )}</nav></div><div class="sidebar-bottom"><div class="workspace-health"><span class="health-dot"></span><div>All work, one place.<small>${data.agents.filter((a: Row) => a.connection === "Connected").length} of ${data.agents.length} agents connected</small></div></div>${button(icon("settings") + "<span>Settings</span>", "nav", 'data-view="settings" aria-label="Settings and credits" title="Settings and credits"', view === "settings" ? "nav-link active" : "nav-link")}<div class="owner"><span class="owner-avatar">M</span><div><strong>Matt</strong><small>Workspace owner</small></div>${button("?", "logout", 'aria-label="Sign out"', "icon-button")}</div></div></aside><div class="main-shell"><header class="topbar">${button(icon("nav"), "toggle-nav", `aria-label="${menuLabel}" aria-expanded="${!navCollapsed}"`, "icon-button nav-toggle")}<div class="breadcrumb">BIS <span>/</span> ${e(view === "office" ? agent(selected)?.name : view === "hq" ? "Headquarters" : view === "dashboard" ? "Overview" : label(view))}</div><div class="topbar-right">${button(icon("settings"), "nav", 'data-view="settings" aria-label="Settings and credits"', "mobile-settings icon-button")}<span class="timezone">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", hour: "numeric", minute: "2-digit" }).format(new Date())} <small>DENVER</small></span>${!mobile ? button(mode === "2d" ? "3D City" : "2D Workspace", "mode", "", "mode-toggle") : ""}${button(icon("pause") + (data.config.stopped ? " Dispatch stopped" : " Stop dispatch"), "stop", "", data.config.stopped ? "stop-button stopped" : "stop-button")}</div></header><main>${view === "harness" ? harnessPanel() : view === "dashboard" ? dashboard2d() : view === "conversations" ? conversationsPage() : view === "announcements" ? announcementsPage() : view === "city" ? city() : view === "hq" ? hq() : view === "office" ? office() : view === "agent" ? office(true) : ["brief", "agenda", "reviews", "goals"].includes(view) ? focusedPage() : view === "crew" ? crew() : view === "settings" ? settings() : view === "project" ? project() : view === "activity" ? activity() : heading("AUDIT TRAIL", "Every action has a history.", "Immutable records from the owner, agents, and scheduler.") + '<section class="panel"><label class="search-field">' + icon("search") + '<input id="event-search" placeholder="Search event, actor, or entity…" aria-label="Search activity"></label><div id="event-results">' + timeline() + "</div></section>"}</main><footer>BIS / CREW OS <span>Built for real work. Made to feel alive.</span><span>America/Denver</span></footer></div></div>`;
    if (retainedStage)
     document.querySelector(".world-stage")?.replaceWith(retainedStage);
+  window.scrollTo(0, pageScrollY);
+  for (const saved of elementScroll) {
+    const el = document.querySelectorAll<HTMLElement>(saved.selector)[saved.index];
+    if (el) {
+      el.scrollTop = saved.top;
+      el.scrollLeft = saved.left;
+    }
+  }
   if (["office", "agent", "conversations"].includes(view)) {
     const recipient = view === "conversations" ? chatAgent : selected;
     const a = agent(recipient);
@@ -1073,7 +1092,7 @@ async function render(preserveWorld = false) {
               void render(true);
               return;
             }
-            void render(true).then(() => document.querySelector<HTMLElement>("#hq-zone-content")?.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "start" }));
+            void render(true);
             return;
           } else if (id === "hq") {
             view = "hq";
@@ -1097,7 +1116,6 @@ async function render(preserveWorld = false) {
   }
 }
 async function setExpanded(value: boolean, remount = true) {
-  if (value && matchMedia("(max-width: 700px)").matches) window.scrollTo(0, 0);
   expanded = value;
   document.body.classList.toggle("viewer-open", value);
   const card = document.querySelector<HTMLElement>(".world-card");
