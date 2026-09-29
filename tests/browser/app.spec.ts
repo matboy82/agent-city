@@ -673,14 +673,18 @@ test("brief dock, saved view, office preset and budget controls", async ({
 });
 
 test("mobile 2D view keeps the menu available and navigation usable", async ({ page }) => {
-  test.skip(true, "The shared login helper asserts the desktop dashboard heading before this mobile-specific assertion.");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => localStorage.setItem("crew.navCollapsed", "true"));
-  await login(page);
-  const menu = page.getByRole("button", { name: "Collapse navigation" });
+  await page.goto("/");
+  await page.getByLabel("Owner passphrase", { exact: true }).fill(passphrase);
+  if (await page.getByLabel("Confirm passphrase").count()) await page.getByLabel("Confirm passphrase").fill(passphrase);
+  await page.locator("#auth-form button").click();
+  await expect(page.getByRole("heading", { name: "Your workspace." })).toBeVisible();
+  const menu = page.getByRole("button", { name: "Open menu" });
   await expect(menu).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
   await menu.click();
+  await expect(page.getByRole("button", { name: "Close menu" })).toBeVisible();
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Conversations" })).toBeVisible();
 });

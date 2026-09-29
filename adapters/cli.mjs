@@ -157,9 +157,9 @@ export class Adapter {
           revision: result.artifact.revision || "1",
         });
       }
-      const summary = String(
-        result?.summary || "Runtime handler returned successfully",
-      );
+      const summary = command.payload?.scoring
+        ? JSON.stringify(result)
+        : String(result?.summary || "Runtime handler returned successfully");
       this.state.commands[command.id] = {
         state: "completed",
         runId,

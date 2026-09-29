@@ -56,7 +56,10 @@ export class Core {
     const work = this.s.list("work", 100000);
     const receipts = work.flatMap(w => (w.receipts || []).map(receipt => ({ workId: w.id, title: w.title, ...receipt }))).sort((a,b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
     const improvements = work.filter(w => w.harnessImprovementFor && !["done", "canceled"].includes(w.status)).map(w => ({ id: w.id, title: w.title, status: w.status, owner: w.raci?.responsible?.[0] || "dave" }));
-    return { generatedAt: now(), source: "run_receipts", receipts, openHarnessImprovements: improvements };
+    const ledger = this.s.list("jev_ledger", 100000);
+    const openDisagreements = ledger.filter(x => x.disagreement || x.escalated).filter(x => !x.label);
+    const unscored = ledger.filter(x => x.jevScore == null);
+    return { generatedAt: now(), source: "run_receipts", receipts, openHarnessImprovements: improvements, jev: { openDisagreements: openDisagreements.slice(0, 30), unscored: unscored.slice(0, 30) } };
   }
   owner(token) {
     const s = this.s.get("session", hash(token || ""));
@@ -169,7 +172,7 @@ export class Core {
       runs: this.s.list("run"),
       receiptBrief: this.receiptBrief(),
       commands: this.s.list("command"),
-      approvals: this.s.list("approval"),
+      approvals: this.s.list("approval").map(a => ({ ...a, jevScore: a.jevLedgerId ? this.s.get("jev_ledger", a.jevLedgerId)?.jevScore ?? null : a.jevScore ?? null, jevScoring: a.jevLedgerId ? this.s.get("jev_ledger", a.jevLedgerId)?.status ?? "queued" : null })),
       handoffs: this.s.list("handoff"),
       artifacts: this.s.list("artifact"),
       messages: this.s.list("message"),
@@ -344,10 +347,28 @@ export class Core {
       status: "queued",
       issuedAt: now(),
       expiresAt: new Date(stamp() + 3600000).toISOString(),
+      retryPolicy: agentId === "jev" && verb === "work.start" && payload.scoring ? { attempts: 3, delayMs: 1000 } : null,
     };
     this.s.put("command", c);
     this.s.event("matt", "command.queued", c.id, { agentId, verb, workId });
     return c;
+  }
+  createJevEntry({ agentId, workId, tier, type, recommendation, approvalId = null, agentConfidence = null }) {
+    const entry = { id: id(), agentId, workId, tier, type, recommendation: String(recommendation || "").slice(0, 2000), jevScore: null, jevRecommendation: null, jevConfidence: null, agentConfidence: typeof agentConfidence === "number" ? agentConfidence : null, agreement: null, disagreement: null, escalated: false, label: null, status: "scoring", approvalId, createdAt: now() };
+    this.s.put("jev_ledger", entry);
+    const questions = tier === "L1" ? {
+      risk: { type: "score", instructions: "Score risk from 0 (minimal) to 10 (critical).", criteria: ["minimal", "low", "moderate", "high", "critical"] },
+      urgency: { type: "score", instructions: "Score urgency from 0 (not urgent) to 10 (immediate).", criteria: ["none", "low", "moderate", "high", "immediate"] },
+      verdict: { type: "choice", instructions: "Should Jev agree with the recommendation?", criteria: { agree: "Recommendation is sound", disagree: "Recommendation is unsound" } },
+    } : { soundness: { type: "score", instructions: "Score judgment soundness from 0 (unsound) to 10 (excellent), and provide confidence.", criteria: ["unsound", "weak", "mixed", "sound", "excellent"] } };
+    const work = this.s.get("work", workId);
+    this.enqueue("jev", "work.start", workId, { scoring: true, ledgerId: entry.id, title: `${tier} ${type} scoring`, detail: entry.recommendation, state: { objective: work?.contract?.objective || "", constraints: work?.contract?.constraints || [], tier }, questions }, `jev-score:${entry.id}`);
+    return entry;
+  }
+  recordJevFailure(entry, error) {
+    entry.status = "unscored"; entry.scoringError = String(error?.message || error).slice(0, 500); entry.failedAt = now(); this.s.put("jev_ledger", entry);
+    const alert = { id: id(), kind: "JEV_SCORING_FAILURE", level: "L0", workId: entry.workId, agentId: entry.agentId, ledgerId: entry.id, message: `Jev scoring failed for ${entry.tier} ${entry.type}: ${entry.scoringError}`, createdAt: now(), resolved: false };
+    this.s.put("alert", alert); this.s.event("jev", "jev.scoring_failed", entry.id, { workId: entry.workId, failure: entry.scoringError });
   }
   validateRaci(value) {
     const r = raci.parse(value);
@@ -1013,6 +1034,10 @@ export class Core {
           if (typeof b.artifact === "string" && b.artifact.trim()) r.editedArtifact = z.string().trim().max(10000).parse(b.artifact);
           r.resolvedAt = now();
           this.s.put("approval", r);
+          if (r.jevLedgerId) {
+            const ledger = this.s.get("jev_ledger", r.jevLedgerId);
+            if (ledger) { ledger.label = r.status === "approved" ? (r.editedArtifact ? "override" : "approve") : "reject"; ledger.labeledAt = r.resolvedAt; this.s.put("jev_ledger", ledger); }
+          }
           if (r.harnessOperation && r.kind === "RUNTIME_UPGRADE") {
             const upgrade = this.require("runtime_upgrade", r.targetId);
             upgrade.approvalStatus = r.status;
@@ -1772,6 +1797,30 @@ export class Core {
       if (b.status === "failed" && !run.failureClass) run.failureClass = "UNCHANGED_REPEATED_FAILURE";
       this.s.put("run", run);
       const w = this.require("work", c.workId);
+      if (c.payload?.scoring && ["completed", "failed"].includes(b.status)) {
+        const entry = this.s.get("jev_ledger", c.payload.ledgerId);
+        if (entry && entry.status === "scoring") {
+          if (b.status === "failed") this.recordJevFailure(entry, new Error(b.error_lines || "Jev scoring command failed"));
+          else {
+            try {
+              const result = typeof b.result === "string" ? JSON.parse(b.result) : b.result;
+              const answers = result?.answers || {};
+              const scoreAnswer = answers.risk || answers.soundness;
+              const score = Number(scoreAnswer?.score ?? answers.urgency?.score);
+              entry.jevScore = Number.isFinite(score) && score >= 0 && score <= 10 ? score : null;
+              entry.jevConfidence = scoreAnswer?.confidence == null || !Number.isFinite(Number(scoreAnswer.confidence)) ? null : Number(scoreAnswer.confidence);
+              entry.jevRecommendation = answers.verdict?.choice || (scoreAnswer?.score != null ? `soundness ${scoreAnswer.score}/10` : null);
+              const agrees = answers.verdict?.choice ? String(answers.verdict.choice).toLowerCase() === "agree" : null;
+              entry.agreement = agrees; entry.disagreement = agrees === false || (typeof entry.agentConfidence === "number" && typeof entry.jevConfidence === "number" && Math.abs(entry.agentConfidence - entry.jevConfidence) > 0.3);
+              entry.escalated = entry.disagreement === true; entry.status = entry.jevScore === null ? "unscored" : "scored"; entry.scoredAt = now();
+              this.s.put("jev_ledger", entry);
+              const approval = entry.approvalId && this.s.get("approval", entry.approvalId);
+              if (approval) { approval.jevScore = entry.jevScore; this.s.put("approval", approval); }
+            } catch (error) { this.recordJevFailure(entry, error); }
+          }
+        }
+        c.status = b.status; c.result = typeof b.result === "string" ? b.result.slice(0, 2000) : null; c.updatedAt = now(); this.s.put("command", c); return c;
+      }
       if (b.status === "completed" || b.status === "failed") {
         const receiptText = run.result || "";
         const verdict = (criterion) => {
@@ -1788,6 +1837,7 @@ export class Core {
           risks: receiptField(receiptText, "RISKS") || "Not reported",
           approvalNeeded: b.status === "failed" ? `Run failed (${run.failureClass}); owner review required before retry` : [receiptField(receiptText, "APPROVAL NEEDED"), ...(w.contract?.approval_required || [])].filter(Boolean).join("; ") || "None reported",
           createdAt: now(),
+          jev: this.s.list("jev_ledger").filter(x => x.workId === w.id).map(x => ({ score: x.jevScore, status: x.status, agreement: x.agreement, disagreement: x.disagreement, escalated: x.escalated })),
         };
         w.receipts ||= [];
         w.receipts.push({ ...receipt, runId: run.id });
@@ -1819,6 +1869,16 @@ export class Core {
         run.harnessImprovementId = improvement.id;
       }
       const templateAdvanced = b.status === "completed" ? this.advanceTemplate(w, run.result) : false;
+      if (b.status === "completed" && a.id !== "jev") {
+        const text = run.result || "";
+        const judgment = receiptField(text, "JUDGMENT");
+        const rawTier = receiptField(text, "TIER")?.toUpperCase();
+        if (judgment && ["L2", "L3"].includes(rawTier)) {
+          const approval = this.s.list("approval").find(x => x.workId === w.id && x.runId === run.id && x.status === "waiting");
+          const entry = this.createJevEntry({ agentId: a.id, workId: w.id, tier: rawTier, type: "judgment", recommendation: judgment, approvalId: approval?.id || null, agentConfidence: Number(receiptField(text, "CONFIDENCE")) || null });
+          if (approval) { approval.jevLedgerId = entry.id; this.s.put("approval", approval); }
+        }
+      }
       if (
         b.status === "completed" &&
         !templateAdvanced &&
@@ -1850,6 +1910,13 @@ export class Core {
     c.result = typeof b.result === "string" ? b.result.slice(0, 2000) : null;
     c.updatedAt = now();
     if (b.status === "running") c.startedAt ||= now();
+    if (c.payload?.scoring && b.status === "failed") {
+      c.scoringAttempts = (c.scoringAttempts || 0) + 1;
+      const policy = c.retryPolicy || { attempts: 3, delayMs: 1000 };
+      if (c.scoringAttempts < policy.attempts) {
+        c.status = "queued"; c.issuedAt = now(); c.expiresAt = new Date(stamp() + 3600000).toISOString(); c.lastScoringFailure = b.error_lines || "Jev scoring failed"; this.s.put("command", c); return c;
+      }
+    }
     if (["completed", "failed"].includes(b.status)) {
       c.runtimeSeconds = Math.max(0, Math.round((stamp() - Date.parse(c.startedAt || c.issuedAt)) / 1000));
       c.budgetSeconds = Number(b.budget_seconds) || null;
@@ -2111,6 +2178,15 @@ export class Core {
       const old = this.s.get("approval", approval.id);
       if (old) return old;
       this.s.put("approval", approval);
+      if (approval.tier === "L1" || approval.kind === "DECISION") {
+        const entry = this.createJevEntry({ agentId: a.id, workId: w.id, tier: "L1", type: "recommendation", recommendation: approval.artifact || approval.context, approvalId: approval.id, agentConfidence: typeof b.confidence === "number" ? b.confidence : null });
+        approval.jevLedgerId = entry.id;
+        this.s.put("approval", approval);
+      }
+      if (approval.tier === "L2" || approval.tier === "L3") {
+        const entry = this.createJevEntry({ agentId: a.id, workId: w.id, tier: approval.tier, type: "judgment", recommendation: approval.artifact || approval.context, approvalId: approval.id, agentConfidence: typeof b.confidence === "number" ? b.confidence : null });
+        approval.jevLedgerId = entry.id; this.s.put("approval", approval);
+      }
       w.status = "waiting_approval";
       w.revision++;
       this.s.put("work", w);

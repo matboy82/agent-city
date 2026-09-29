@@ -50,6 +50,7 @@ export async function handle(command, { adapter }) {
     workId: command.workId || command.id,
     title: payload.title || payload.task || "",
     detail: payload.detail || payload.body || payload.text || "",
+    ...(payload.state || {}),
     from: payload.from || "owner",
   };
 
@@ -85,7 +86,7 @@ export async function handle(command, { adapter }) {
   }
 
   return {
-    summary: `Jev judgments — ${lines.join("; ") || "no answers"}`,
+    summary: JSON.stringify({ summary: `Jev judgments — ${lines.join("; ") || "no answers"}`, answers, model: data.model }),
     answers,
     model: data.model,
   };

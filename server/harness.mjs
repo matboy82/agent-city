@@ -32,12 +32,13 @@ export function jevAnalytics(events, agents, { nowAt = Date.now(), coverageDenom
   const since = nowAt - 30 * DAY;
   const recent = rows => rows.filter(x => { const t = timestamp(x.createdAt); return Number.isFinite(t) && t >= since && t <= nowAt; });
   const rows = agents.map(a => {
-    const own = scored.filter(x => x.agentId === a.id);
-    const windowed = recent(own);
+    const own = valid.filter(x => x.agentId === a.id);
+    const ownScored = own.filter(x => typeof x.jevScore === "number" && Number.isFinite(x.jevScore));
+    const windowed = recent(ownScored);
     const labels = Object.fromEntries(LABELS.map(label => [label, own.filter(x => x.label === label).length]));
     const outcomeFor = (x, field) => typeof x[field] === "boolean" ? x[field] : null;
     const disagreements = own.filter(x => x.disagreement === true || x.escalated === true || (x.recommendation && x.jevRecommendation && x.recommendation !== x.jevRecommendation) || (typeof x.agentConfidence === "number" && typeof x.jevConfidence === "number" && Math.abs(x.agentConfidence - x.jevConfidence) > 0.3));
-    const denominator = coverageDenominators?.[a.id];
+    const denominator = coverageDenominators?.[a.id] ?? own.length;
     const expected = Number.isInteger(denominator) && denominator >= 0 ? denominator : null;
     const rate = expected === null ? null : expected === 0 ? null : own.length / expected;
     const periods = ["day", "week"].map(period => {
@@ -48,7 +49,8 @@ export function jevAnalytics(events, agents, { nowAt = Date.now(), coverageDenom
     });
     const outcomeRows = windowed.map(x => ({ ...x, correct: outcomeFor(x, "correct") }));
     return {
-      agentId: a.id, scored: own.length, byDay: Object.fromEntries(Array.from({ length: 30 }, (_, i) => { const start = new Date(nowAt - i * DAY); const key = start.toISOString().slice(0, 10); return [key, own.filter(x => x.createdAt?.slice(0, 10) === key).length]; })),
+      agentId: a.id, scored: ownScored.length, byDay: Object.fromEntries(Array.from({ length: 30 }, (_, i) => { const start = new Date(nowAt - i * DAY); const key = start.toISOString().slice(0, 10); return [key, ownScored.filter(x => x.createdAt?.slice(0, 10) === key).length]; })),
+      pending: own.filter(x => x.status === "scoring").length, unscored: own.filter(x => x.status === "unscored").length,
       periods: Object.fromEntries(periods), labels,
       agreementRate: own.some(x => typeof x.agreement === "boolean") ? own.filter(x => x.agreement === true).length / own.filter(x => typeof x.agreement === "boolean").length : null,
       disagreementCount: disagreements.length,
@@ -92,7 +94,9 @@ export function createHarness(core) {
       const available = rows.length > 0 || core.s.get("jev_ledger", "_source")?.available === true;
       const source = available ? rows : null;
       const coverage = core.s.get("jev_coverage", "_denominators");
-      return jevAnalytics(source, core.s.list("agent"), { coverageDenominators: coverage?.byAgent || null });
+      const result = jevAnalytics(source, core.s.list("agent"), { coverageDenominators: coverage?.byAgent || null });
+      if (result.available) result.pending = rows.filter(x => x.status === "scoring").length;
+      return result;
     },
     requestRuntimeUpgrade(version) {
       assert(typeof version === "string" && /^v?\d+\.\d+\.\d+$/.test(version), "Specify an exact stable runtime version");
