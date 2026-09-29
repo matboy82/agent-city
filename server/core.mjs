@@ -171,6 +171,15 @@ export class Core {
       work: this.s.list("work"),
       runs: this.s.list("run"),
       receiptBrief: this.receiptBrief(),
+      morningBriefs: (() => {
+        const out = {};
+        for (const b of this.s.list("brief", 1000)) {
+          if (!b || (b.kind !== "daily" && b.kind !== "crew")) continue;
+          const cur = out[b.kind];
+          if (!cur || b.createdAt > cur.createdAt) out[b.kind] = b;
+        }
+        return out;
+      })(),
       commands: this.s.list("command"),
       approvals: this.s.list("approval").map(a => ({ ...a, jevScore: a.jevLedgerId ? this.s.get("jev_ledger", a.jevLedgerId)?.jevScore ?? null : a.jevScore ?? null, jevScoring: a.jevLedgerId ? this.s.get("jev_ledger", a.jevLedgerId)?.status ?? "queued" : null })),
       handoffs: this.s.list("handoff"),
@@ -743,6 +752,20 @@ export class Core {
           this.require("agent", b.agentId);
           r = { id: id(), agentId: b.agentId, createdAt: now(), updatedAt: now(), runtimeSessionId: null, instructionHash: null };
           this.s.put("conversation", r);
+          break;
+        }
+        case "ack_owner_messages": {
+          const ackAgent = z.string().min(1).parse(b.agentId);
+          this.require("agent", ackAgent);
+          let acked = 0;
+          for (const m of this.s.list("message", 100000)) {
+            if (m.agentId === ackAgent && m.author && m.author !== "matt" && m.status === "delivered") {
+              m.status = "seen";
+              this.s.put("message", m);
+              acked++;
+            }
+          }
+          r = { ok: true, acked };
           break;
         }
         case "send_agent_message": {
@@ -2369,6 +2392,56 @@ export class Core {
       }
       this.s.event(a.id, "message.replied", m.id);
       return { ok: true };
+    }
+    if (action === "publish_brief") {
+      // Chief of Staff publishes the morning brief; rendered on the Morning Brief page.
+      assert(a.id === "dave", "Only the Chief of Staff can publish the morning brief", 403);
+      const kind = z.enum(["daily", "crew"]).parse(b.kind);
+      const title = z.string().trim().min(1).max(140).parse(b.title);
+      const body = z.string().trim().min(1).max(20000).parse(b.body);
+      const idem = b.idempotency_key === undefined ? null : z.string().min(8).max(200).parse(b.idempotency_key);
+      if (idem) {
+        const prior = this.s.list("brief", 1000).find((x) => x.agentId === a.id && x.idempotencyKey === idem);
+        if (prior) return { ok: true, id: prior.id, deduped: true };
+      }
+      const brief = { id: id(), agentId: a.id, kind, title, body, idempotencyKey: idem, createdAt: now() };
+      this.s.put("brief", brief);
+      this.s.event(a.id, "brief.published", brief.id, { kind, title });
+      return { ok: true, id: brief.id };
+    }
+    if (action === "message_owner") {
+      // Agent-initiated private message to Matt (e.g. Dave chatting the daily brief).
+      // Lands in the agent<->Matt conversation thread in the Crew OS UI.
+      assert(a.id === "dave", "Only the Chief of Staff can message Matt directly", 403);
+      const body = z.string().trim().min(1).max(4000).parse(b.body);
+      const recent = this.s
+        .list("message", 100000)
+        .filter((m) => m.agentId === a.id && m.author && m.author !== "matt" && stamp() - Date.parse(m.createdAt) < 300000);
+      assert(recent.length === 0, "Wait five minutes before sending Matt another message", 429);
+      let conversation = this.s
+        .list("conversation", 1000)
+        .filter((c) => c.agentId === a.id)
+        .sort((x, y) => y.createdAt.localeCompare(x.createdAt))[0];
+      if (!conversation) {
+        conversation = { id: id(), agentId: a.id, createdAt: now(), updatedAt: now(), runtimeSessionId: null, instructionHash: null };
+        this.s.put("conversation", conversation);
+      }
+      const m = {
+        id: id(),
+        agentId: a.id,
+        workId: null,
+        body,
+        scope: "private",
+        conversationId: conversation.id,
+        status: "delivered",
+        author: a.id,
+        createdAt: now(),
+      };
+      this.s.put("message", m);
+      conversation.updatedAt = m.createdAt;
+      this.s.put("conversation", conversation);
+      this.s.event(a.id, "message.owner_sent", m.id, {});
+      return { ok: true, id: m.id };
     }
     throw new Fault("Unknown agent action", 404);
   }

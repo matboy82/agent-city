@@ -2332,3 +2332,58 @@ label[hidden] {
     border-radius: 20px;
   }
 }
+
+/* Dave's published briefs (Morning Brief page) */
+.brief-published {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 8px 0;
+  background: var(--panel);
+}
+.brief-published summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  list-style: none;
+}
+.brief-published summary::-webkit-details-marker {
+  display: none;
+}
+.brief-published summary::before {
+  content: "+";
+  font-weight: 700;
+  color: var(--blue);
+}
+.brief-published[open] summary::before {
+  content: "\2013";
+}
+.brief-published summary small {
+  color: var(--muted);
+  margin-left: auto;
+}
+.brief-body {
+  padding: 0 14px 14px;
+  max-height: 480px;
+  overflow: auto;
+  color: var(--ink);
+}
+.brief-body h4,
+.brief-body h5,
+.brief-body h6 {
+  margin: 12px 0 4px;
+}
+.brief-body p {
+  margin: 6px 0;
+}
+.brief-body ul {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.brief-body hr {
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid var(--line);
+}

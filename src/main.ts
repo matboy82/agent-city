@@ -1,4 +1,4 @@
-import "./style.css";
+﻿import "./style.css";
 type Row = Record<string, any>;
 const app = document.querySelector<HTMLDivElement>("#app")!;
 let token = "",
@@ -71,6 +71,38 @@ const e = (v: any) =>
         c
       ]!,
   );
+// Tiny markdown renderer for agent-published briefs: headings, bold/italic,
+// unordered lists, rules, paragraphs. Input is HTML-escaped first, so output is safe.
+const md = (src: string) => {
+  const lines = String(src ?? "").split("\n");
+  let html = "", inList = false;
+  const inline = (t: string) =>
+    e(t)
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  for (const line of lines) {
+    const t = line.trim();
+    const hashes = t.match(/^#+/);
+    if (hashes && /^#+\s/.test(t)) {
+      if (inList) { html += "</ul>"; inList = false; }
+      const lv = Math.min(hashes[0].length + 2, 6);
+      html += `<h${lv}>${inline(t.replace(/^#+\s*/, ""))}</h${lv}>`;
+    } else if (/^---+$/.test(t)) {
+      if (inList) { html += "</ul>"; inList = false; }
+      html += "<hr>";
+    } else if (/^[-*]\s+/.test(t)) {
+      if (!inList) { html += "<ul>"; inList = true; }
+      html += `<li>${inline(t.replace(/^[-*]\s+/, ""))}</li>`;
+    } else if (!t) {
+      if (inList) { html += "</ul>"; inList = false; }
+    } else {
+      if (inList) { html += "</ul>"; inList = false; }
+      html += `<p>${inline(t)}</p>`;
+    }
+  }
+  if (inList) html += "</ul>";
+  return html;
+};
 const label = (s: string) =>
   s.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const time = (v: string) =>
@@ -331,8 +363,23 @@ function briefDock() {
       .join("") || '<p class="muted">Nothing queued.</p>'
   }${button("Open focused brief ?", "nav", 'data-view="brief"', "text-button")}</div></aside>`;
 }
+function daveBriefs() {
+  const briefs: Record<string, Row> = data.morningBriefs || {};
+  const kinds: [string, string][] = [["daily", "Daily brief"], ["crew", "Crew briefing"]];
+  const rendered = kinds
+    .map(([kind, labelText]) => {
+      const b = briefs[kind];
+      if (!b) return "";
+      return `<details class="brief-published"${kind === "daily" ? " open" : ""}><summary><strong>${e(labelText)}</strong><span>${e(b.title)}</span><small>${time(b.createdAt)}</small></summary><div class="brief-body">${md(b.body)}</div></details>`;
+    })
+    .join("");
+  return `<div class="section-title"><h3>Dave's brief</h3><span class="eyebrow">CHIEF OF STAFF</span></div>${
+    rendered ||
+    '<p class="muted">No brief published yet. Dave publishes the daily brief at 7:00 AM and the crew briefing Tue/Fri at 7:30 AM.</p>'
+  }`;
+}
 function morningBrief() {
-  return `<aside class="brief"><div class="row"><span class="eyebrow">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", weekday: "long", month: "short", day: "numeric" }).format(new Date())}</span>${button("?", "sync", 'aria-label="Refresh morning brief"', "icon-button")}</div><h2>Morning Brief<span class="blue">.</span></h2><div class="brief-numbers"><div><strong>${data.agents.filter((a: Row) => a.connection === "Connected" && a.status === "active").length}</strong><small>active agents</small></div><div><strong>${pending().length}</strong><small>need you</small></div><div><strong>${data.queue.length}</strong><small>on the agenda</small></div></div><div class="section-title"><h3>Waiting on you</h3><span>${pending().length.toString().padStart(2, "0")}</span></div>${reviewCards(2)}<section class="receipt-brief"><h3>Recent run receipts</h3>${(data.receiptBrief?.receipts || []).slice(0, 3).map((r: Row) => `<p><strong>${e(r.title)}</strong> · ${r.notVerified?.length ? `${r.notVerified.length} checks not verified` : `${r.verified?.length || 0} checks verified`}</p>`).join("") || '<p class="muted">No completed runs have receipts yet.</p>'}<h3>Harness improvements for Dave</h3>${(data.receiptBrief?.openHarnessImprovements || []).slice(0, 3).map((w: Row) => `<p>${e(w.title)} · ${e(w.status)}</p>`).join("") || '<p class="muted">No open improvement tasks.</p>'}</section><div class="section-title"><h3>Queued for today</h3>${button(icon("plus"), "add-queue", 'aria-label="Add queue item"', "icon-button")}</div><div class="queue-list">${
+  return `<aside class="brief"><div class="row"><span class="eyebrow">${new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", weekday: "long", month: "short", day: "numeric" }).format(new Date())}</span>${button("?", "sync", 'aria-label="Refresh morning brief"', "icon-button")}</div><h2>Morning Brief<span class="blue">.</span></h2><div class="brief-numbers"><div><strong>${data.agents.filter((a: Row) => a.connection === "Connected" && a.status === "active").length}</strong><small>active agents</small></div><div><strong>${pending().length}</strong><small>need you</small></div><div><strong>${data.queue.length}</strong><small>on the agenda</small></div></div>${daveBriefs()}<div class="section-title"><h3>Waiting on you</h3><span>${pending().length.toString().padStart(2, "0")}</span></div>${reviewCards(2)}<section class="receipt-brief"><h3>Recent run receipts</h3>${(data.receiptBrief?.receipts || []).slice(0, 3).map((r: Row) => `<p><strong>${e(r.title)}</strong> · ${r.notVerified?.length ? `${r.notVerified.length} checks not verified` : `${r.verified?.length || 0} checks verified`}</p>`).join("") || '<p class="muted">No completed runs have receipts yet.</p>'}<h3>Harness improvements for Dave</h3>${(data.receiptBrief?.openHarnessImprovements || []).slice(0, 3).map((w: Row) => `<p>${e(w.title)} · ${e(w.status)}</p>`).join("") || '<p class="muted">No open improvement tasks.</p>'}</section><div class="section-title"><h3>Queued for today</h3>${button(icon("plus"), "add-queue", 'aria-label="Add queue item"', "icon-button")}</div><div class="queue-list">${
     data.queue
       .slice(0, 6)
       .map(
@@ -496,7 +543,12 @@ function chatMessages(agentId: string, conversation: string) {
   const rows = data.messages.filter((m: Row) => m.agentId === agentId && m.scope === "private" &&
     (conversation === "legacy" ? !m.conversationId : m.conversationId === conversation));
   rows.sort((a: Row, b: Row) => a.createdAt.localeCompare(b.createdAt));
-  return rows.map((m: Row) => `<div class="chat-turn"><article class="chat-bubble mine"><strong>You</strong><p>${e(m.body)}</p><small>${time(m.createdAt)} · ${e(label(m.status))}</small></article>${m.reply ? `<article class="chat-bubble theirs"><strong>${e(agent(agentId)?.name || agentId)}</strong><p>${e(m.reply)}</p><small>Reply received</small></article>` : ""}</div>`).join("") || empty("Start a conversation", "Send a message to begin this session.");
+  return rows.map((m: Row) => `<div class="chat-turn">${(() => {
+    const mine = !m.author || m.author === "matt";
+    if (!mine)
+      return `<article class="chat-bubble theirs"><strong>${e(agent(agentId)?.name || m.author)}</strong><p>${e(m.body)}</p><small>${time(m.createdAt)} \u00b7 sent to you</small></article>`;
+    return `<article class="chat-bubble mine"><strong>You</strong><p>${e(m.body)}</p><small>${time(m.createdAt)} \u00b7 ${e(label(m.status))}</small></article>${m.reply ? `<article class="chat-bubble theirs"><strong>${e(agent(agentId)?.name || agentId)}</strong><p>${e(m.reply)}</p><small>Reply received</small></article>` : ""}`;
+  })()}</div>`).join("") || empty("Start a conversation", "Send a message to begin this session.");
 }
 function chatMarkup(agentId: string) {
   const conversation = conversationId(agentId);
@@ -510,7 +562,7 @@ function conversationsPage() {
   const agents = data.agents.slice().reverse();
   const active = agent(chatAgent) || agents[0];
   if (!active) return empty("No agents yet", "Register a crew member to start a conversation.");
-  const unread = (id: string) => data.messages.filter((m: Row) => m.agentId === id && m.scope === "private" && m.reply).length;
+  const unread = (id: string) => data.messages.filter((m: Row) => m.agentId === id && m.scope === "private" && (m.reply || (m.author && m.author !== "matt" && m.status === "delivered"))).length;
   return `${heading("CREW MESSAGING", "Conversations", "Pick a teammate and continue a private conversation.")}<div class="inbox-layout"><nav class="inbox-agents" aria-label="Conversations">${agents.map((a: Row) => `<button class="inbox-agent ${a.id === active.id ? "active" : ""}" data-action="chat-agent" data-id="${e(a.id)}">${avatar(a)}<span><strong>${e(a.name)}</strong><small>${e(a.currentTask || a.role)}</small></span>${unread(a.id) ? `<b>${unread(a.id)}</b>` : ""}</button>`).join("")}</nav><section class="panel conversation inbox-thread"><div class="section-title"><div class="row">${avatar(active)}<div><h2>${e(active.name)}</h2><small>${e(active.role)} · ${e(active.connection)}</small></div></div><span class="eyebrow">PRIVATE</span></div><div id="chat-pane">${chatMarkup(active.id)}</div><form id="message-form"><label class="sr-only" for="message-body">Message ${e(active.name)}</label><textarea id="message-body" name="body" placeholder="Message ${e(active.name)}…" required maxlength="4000"></textarea><div class="chat-compose-actions"><small>Enter to send · Shift+Enter for a new line</small><button class="primary" type="submit">Send ${icon("arrow")}</button></div></form></section></div>`;
 }
 function announcementsPage() {
@@ -1570,6 +1622,7 @@ document.addEventListener("click", async (ev) => {
       chatAgent = target.dataset.id || "";
       selected = chatAgent;
       view = "conversations";
+      await api("ack_owner_messages", { agentId: chatAgent }).catch(() => {});
       await render();
       return;
     }
