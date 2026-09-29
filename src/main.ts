@@ -18,6 +18,7 @@ const chatSelection = new Map<string, string>();
 let navCollapsed = localStorage.getItem("crew.navCollapsed") === "true";
 const mobileQuery = matchMedia("(max-width: 700px)");
 let mobile = mobileQuery.matches;
+if (mobile) navCollapsed = false;
 let mode = localStorage.getItem("crew.mode") || (flat ? "2d" : "3d");
 if (mobile) mode = "2d";
 let chatAgent = "";
@@ -735,6 +736,7 @@ function project() {
 async function render(preserveWorld = false) {
   mobile = mobileQuery.matches;
   if (mobile) {
+    navCollapsed = false;
     mode = "2d";
     if (["city", "hq", "office", "project", "agent"].includes(view)) view = "dashboard";
   }
@@ -758,7 +760,7 @@ async function render(preserveWorld = false) {
     "crew.view",
     ["office", "project", "agent"].includes(view) ? (mobile ? "dashboard" : "city") : view,
   );
-  document.body.classList.toggle("nav-collapsed", navCollapsed);
+  document.body.classList.toggle("nav-collapsed", !mobile && navCollapsed);
   if (!["city", "office", "hq"].includes(view)) await setExpanded(false, false);
   app.innerHTML = `<div class="shell ${mobile ? "mobile-workspace" : ""} ${mode === "2d" ? "two-d-mode" : "three-d-mode"}"><aside class="sidebar"><a class="brand" href="#" data-action="nav" data-view="${mobile || mode === "2d" ? "dashboard" : "city"}"><span class="brand-mark">C<span>•</span></span><span>crew<span class="brand-light">os</span><small>BIS WORKSPACE</small></span></a><div class="sidebar-caption">WORKSPACE</div><nav aria-label="Main navigation">${[
     ["dashboard", "Overview"],
@@ -1238,7 +1240,7 @@ document.addEventListener("click", async (ev) => {
     if (action === "toggle-nav") {
       navCollapsed = !navCollapsed;
       localStorage.setItem("crew.navCollapsed", String(navCollapsed));
-      document.body.classList.toggle("nav-collapsed", navCollapsed);
+      document.body.classList.toggle("nav-collapsed", !mobile && navCollapsed);
       target.setAttribute(
         "aria-label",
         `${navCollapsed ? "Expand" : "Collapse"} navigation`,

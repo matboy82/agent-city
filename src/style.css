@@ -1528,7 +1528,7 @@ legend {
 }
 @media (max-width: 700px) {
   .crew-live-work, .crew-office-bottom { grid-template-columns: 1fr; }
-  .mobile-workspace .nav-toggle { display:none; }
+  .mobile-workspace .nav-toggle { display:inline-flex; flex:0 0 auto; width:40px; height:40px; justify-content:center; align-items:center; }
   .mobile-workspace .topbar { position:sticky; top:0; z-index:6; background:var(--bg); }
   .mobile-workspace main { padding-top:18px; }
   .mobile-workspace footer { display:none; }
@@ -2165,9 +2165,7 @@ label[hidden] {
     min-width: 75px;
     padding-inline: 8px;
   }
-  .nav-collapsed .sidebar {
-    display: none;
-  }
+  .mobile-workspace.nav-collapsed .sidebar { display:flex; }
   .nav-toggle {
     margin-right: 6px;
   }
