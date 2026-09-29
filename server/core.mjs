@@ -759,8 +759,9 @@ export class Core {
           this.require("agent", ackAgent);
           let acked = 0;
           for (const m of this.s.list("message", 100000)) {
-            if (m.agentId === ackAgent && m.author && m.author !== "matt" && m.status === "delivered") {
-              m.status = "seen";
+            if (m.agentId === ackAgent && m.scope === "private" && ((m.author && m.author !== "matt" && m.status === "delivered") || (m.reply && !m.replySeenAt))) {
+              if (m.author && m.author !== "matt" && m.status === "delivered") m.status = "seen";
+              if (m.reply && !m.replySeenAt) m.replySeenAt = now();
               this.s.put("message", m);
               acked++;
             }

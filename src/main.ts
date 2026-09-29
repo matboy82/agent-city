@@ -539,6 +539,15 @@ function conversationId(agentId: string) {
     ? saved
     : conversations.sort((a: Row, b: Row) => b.createdAt.localeCompare(a.createdAt))[0]?.id || "legacy";
 }
+async function acknowledgeConversation(agentId: string) {
+  await api("ack_owner_messages", { agentId });
+  const seenAt = new Date().toISOString();
+  for (const message of data.messages) {
+    if (message.agentId !== agentId || message.scope !== "private") continue;
+    if (message.author && message.author !== "matt" && message.status === "delivered") message.status = "seen";
+    if (message.reply && !message.replySeenAt) message.replySeenAt = seenAt;
+  }
+}
 function chatMessages(agentId: string, conversation: string) {
   const rows = data.messages.filter((m: Row) => m.agentId === agentId && m.scope === "private" &&
     (conversation === "legacy" ? !m.conversationId : m.conversationId === conversation));
@@ -562,7 +571,7 @@ function conversationsPage() {
   const agents = data.agents.slice().reverse();
   const active = agent(chatAgent) || agents[0];
   if (!active) return empty("No agents yet", "Register a crew member to start a conversation.");
-  const unread = (id: string) => data.messages.filter((m: Row) => m.agentId === id && m.scope === "private" && (m.reply || (m.author && m.author !== "matt" && m.status === "delivered"))).length;
+  const unread = (id: string) => data.messages.filter((m: Row) => m.agentId === id && m.scope === "private" && ((m.reply && !m.replySeenAt) || (m.author && m.author !== "matt" && m.status === "delivered"))).length;
   return `${heading("CREW MESSAGING", "Conversations", "Pick a teammate and continue a private conversation.")}<div class="inbox-layout"><nav class="inbox-agents" aria-label="Conversations">${agents.map((a: Row) => `<button class="inbox-agent ${a.id === active.id ? "active" : ""}" data-action="chat-agent" data-id="${e(a.id)}">${avatar(a)}<span><strong>${e(a.name)}</strong><small>${e(a.currentTask || a.role)}</small></span>${unread(a.id) ? `<b>${unread(a.id)}</b>` : ""}</button>`).join("")}</nav><section class="panel conversation inbox-thread"><div class="section-title"><div class="row">${avatar(active)}<div><h2>${e(active.name)}</h2><small>${e(active.role)} · ${e(active.connection)}</small></div></div><span class="eyebrow">PRIVATE</span></div><div id="chat-pane">${chatMarkup(active.id)}</div><form id="message-form"><label class="sr-only" for="message-body">Message ${e(active.name)}</label><textarea id="message-body" name="body" placeholder="Message ${e(active.name)}…" required maxlength="4000"></textarea><div class="chat-compose-actions"><small>Enter to send · Shift+Enter for a new line</small><button class="primary" type="submit">Send ${icon("arrow")}</button></div></form></section></div>`;
 }
 function announcementsPage() {
@@ -1593,11 +1602,12 @@ document.addEventListener("click", async (ev) => {
     if (action === "nav") {
       view = target.dataset.view!;
       if (view === "conversations" && !chatAgent) chatAgent = data.agents[0]?.id || "";
+      if (view === "conversations" && chatAgent) await acknowledgeConversation(chatAgent).catch(() => {});
       await render();
       return;
     }
     if (action === "office") {
-      if (mobile || mode === "2d") { chatAgent = id!; selected = id!; view = "conversations"; await render(); return; }
+      if (mobile || mode === "2d") { chatAgent = id!; selected = id!; view = "conversations"; await acknowledgeConversation(chatAgent).catch(() => {}); await render(); return; }
       selected = id!;
       view = "office";
       await render();
@@ -1640,7 +1650,7 @@ document.addEventListener("click", async (ev) => {
       chatAgent = target.dataset.id || "";
       selected = chatAgent;
       view = "conversations";
-      await api("ack_owner_messages", { agentId: chatAgent }).catch(() => {});
+      await acknowledgeConversation(chatAgent).catch(() => {});
       await render();
       return;
     }
