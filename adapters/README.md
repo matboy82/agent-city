@@ -1,17 +1,17 @@
 ﻿# Runtime adapters
 
-Jeff and the other local agents run in Hermes. Muse is the cloud runtime. Both connect to the same HTTP protocol; no agent execution is simulated.
+Dave and the other local agents run in Hermes. Muse is the cloud runtime. Both connect to the same HTTP protocol; no agent execution is simulated.
 
 ## HTTPS
 
-1. In Jeff's office, open Connection and generate a pairing code.
+1. In Dave's office, open Connection and generate a pairing code.
 2. On the trusted runtime machine, run:
 
 ```sh
-npm run adapter -- pair http://localhost:4310 jeff ONE_TIME_CODE
+npm run adapter -- pair http://localhost:4310 dave ONE_TIME_CODE
 ```
 
-Use an HTTPS public origin for remote hosts. `CREW_RUNTIME_ID` defaults to `hermes-jeff`. `CREW_ADAPTER_CONFIG` chooses the private credential file (default `data/adapter.json`). Use distinct files and operating-system access controls for each agent. On Windows, restrict the file's ACL to the runtime account; POSIX mode 0600 is applied where supported.
+Use an HTTPS public origin for remote hosts. `CREW_RUNTIME_ID` defaults to `hermes-dave`. `CREW_ADAPTER_CONFIG` chooses the private credential file (default `data/adapter.json`). Use distinct files and operating-system access controls for each agent. On Windows, restrict the file's ACL to the runtime account; POSIX mode 0600 is applied where supported.
 
 3. Set `CREW_HANDLER` to an absolute path to a module that exports:
 
@@ -41,7 +41,7 @@ You can also import `Adapter` from `adapters/cli.mjs` into a runtime-specific se
 Private bridge configuration, outside all shared folders:
 
 ```json
-{"bindings":[{"agentId":"jeff","runtimeId":"hermes-jeff","path":"/private-drive/BIS/jeff"}]}
+{"bindings":[{"agentId":"dave","runtimeId":"hermes-dave","path":"/private-drive/BIS/dave"}]}
 ```
 
 Set `CREW_MAILBOX_CONFIG` to this configuration file and `CREW_DB` to the server database. Run `node adapters/drive-bridge.mjs` on a scheduler. The bridge reads only explicitly mapped paths; it never searches by folder name or falls back to a root folder. Revoke the HTTPS connection before enabling Drive for that agent.
@@ -57,33 +57,33 @@ Folder ACLs are the authentication boundary. A local mount must preserve isolati
 
 ## Installed Hermes handler
 
-This rebuild includes `adapters/hermes.mjs`, verified against the CLI installed at `C:\Users\Matt\AppData\Local\hermes\bin\hermes.exe`. Jeff's named profile exists. It invokes:
+This rebuild includes `adapters/hermes.mjs`, verified against the CLI installed at `C:\Users\Matt\AppData\Local\hermes\bin\hermes.exe`. Dave's named profile exists. It invokes:
 
 ```text
-hermes --profile jeff chat --query-file - --format stream-json --in <BIS workspace>
+hermes --profile dave chat --query-file - --format stream-json --in <BIS workspace>
 ```
 
-On Matt's local machine, the launcher defaults to `C:\Users\Matt\My Drive\Shared Cognition\BIS-Cognition`. The sibling `Personal-Cognition` folder is outside Jeff's workspace. From the repository root, generate a one-time code in Jeff's **Connection** page and run:
+On Matt's local machine, the launcher defaults to `C:\Users\Matt\My Drive\Shared Cognition\BIS-Cognition`. The sibling `Personal-Cognition` folder is outside Dave's workspace. From the repository root, generate a one-time code in Dave's **Connection** page and run:
 
 ```powershell
-.\adapters\jeff.ps1 -PairCode 'ONE_TIME_CODE'
+.\adapters\dave.ps1 -PairCode 'ONE_TIME_CODE'
 ```
 
-That pairs Jeff, saves his credential privately under ignored `data/adapter-jeff.json`, and starts polling. On later starts, run `.\adapters\jeff.ps1`. For a server or another machine, pass `-Workspace <BIS-directory> -Server <HTTPS-origin>` when pairing; the saved credential retains the origin. The script and handler check that the selected workspace does not contain `Personal-Cognition`.
+That pairs Dave, saves his credential privately under ignored `data/adapter-dave.json`, and starts polling. On later starts, run `.\adapters\dave.ps1`. For a server or another machine, pass `-Workspace <BIS-directory> -Server <HTTPS-origin>` when pairing; the saved credential retains the origin. The script and handler check that the selected workspace does not contain `Personal-Cognition`.
 
 On Linux, or when running Hermes on a different host from the Crew OS server, use the same adapter and handler with an explicit private workspace and HTTPS origin:
 
 ```sh
-export CREW_ADAPTER_CONFIG="$PWD/data/adapter-jeff.json"
-export CREW_RUNTIME_ID=hermes-jeff
-npm run adapter -- pair https://crew.example.com jeff ONE_TIME_CODE
+export CREW_ADAPTER_CONFIG="$PWD/data/adapter-dave.json"
+export CREW_RUNTIME_ID=hermes-dave
+npm run adapter -- pair https://crew.example.com dave ONE_TIME_CODE
 export CREW_HANDLER="$PWD/adapters/hermes.mjs"
 export CREW_HERMES_WORKSPACE=/absolute/path/to/BIS-Cognition
-export CREW_HERMES_PROFILE=jeff
+export CREW_HERMES_PROFILE=dave
 npm run adapter -- run
 ```
 
-Run the adapter where the Hermes CLI and its Jeff profile are installed. The application server can remain containerized; only the adapter needs access to the BIS workspace and Hermes executable.
+Run the adapter where the Hermes CLI and its Dave profile are installed. The application server can remain containerized; only the adapter needs access to the BIS workspace and Hermes executable.
 
 `CREW_HERMES_BIN` overrides the installed executable, including on a Linux server running Hermes. `CREW_HERMES_TOOLSETS` can narrow the profile's enabled toolsets. `CREW_HERMES_RUN_BUDGET` overrides the default 10-minute message or 30-minute mission limit (60–7200 seconds). A stopped or failed turn is reported as failed and retains an uncertain local ledger entry until its external effects are reconciled. Existing Hermes approvals are preserved; top-level `-z` and `--yolo` are never passed. Subprocesses use direct argument arrays, stdin for work text, and hidden windows on Windows. No shell interprets mission text. The handler parses only terminal result events; raw tool output is not forwarded into logs.
 
@@ -93,6 +93,6 @@ The local executable's help was verified without starting a paid/model-backed ta
 
 ## Work queue and office activity
 
-Hermes agents expose live office state in `crew-work-queue.json` at the root of their configured `CREW_HERMES_WORKSPACE`. The adapter reads it on each heartbeat; missing or invalid files report empty queue/activity and no current task. Keep the file current during substantive work and clear the task/set activity to `idle` when done. Jeff maintains this file in his BIS workspace. Use only supported activities: `typing`, `presenting`, `walking`, `reading`, `on_call`, `celebrating`, `idle`.
+Hermes agents expose live office state in `crew-work-queue.json` at the root of their configured `CREW_HERMES_WORKSPACE`. The adapter reads it on each heartbeat; missing or invalid files report empty queue/activity and no current task. Keep the file current during substantive work and clear the task/set activity to `idle` when done. Dave maintains this file in his BIS workspace. Use only supported activities: `typing`, `presenting`, `walking`, `reading`, `on_call`, `celebrating`, `idle`.
 
 Example: `{ "current_task": "Reviewing the operating plan", "current_activity": "reading", "queue": [{ "text": "Draft Q4 plan", "detail": "Prepare the first draft", "source_key": "q4-plan" }], "activity": [{ "summary": "Reviewed the planning brief", "time": "2026-09-27T14:00:00Z" }] }`. Queue and activity are capped at 20 entries; queue item keys are `text`, `detail`, `time`, `source_key`, while activity item keys are `summary`, `detail`, `time`, `source_key`.

@@ -12,7 +12,7 @@ let token = "",
     localStorage.getItem("crew.motion") === "true" ||
     matchMedia("(prefers-reduced-motion: reduce)").matches;
 const portraitUrls = new Map<string, string>();
-const profilePortraits = new Set(["angela", "arthur", "calvin", "chad", "irene", "jeff", "jefferson", "jev", "jonathan", "mark", "nerby", "opal", "proctor", "rachel", "sally", "steve", "ted", "triton", "video", "zack"]);
+const profilePortraits = new Set(["angela", "arthur", "calvin", "chad", "irene", "jefferson", "jev", "dave", "jonathan", "mark", "nerby", "opal", "proctor", "rachel", "sally", "steve", "ted", "triton", "video", "zack"]);
 const previewDesigns = new Map<string, Row>();
 const chatSelection = new Map<string, string>();
 let navCollapsed = localStorage.getItem("crew.navCollapsed") === "true";
@@ -1193,7 +1193,7 @@ document.addEventListener("click", async (ev) => {
       return;
     }
     if (action === "template-new") {
-      openForm("New dispatch template", "Save template", input("id", "Template ID") + input("name", "Name") + '<label>Steps JSON<textarea name="steps" required>[{"agentId":"jeff","handoff":"Deliver the result for the next step"}]</textarea></label>' + input("completionCriteria", "Completion criteria") + input("maxLoops", "Maximum loops", "number"), async f => { let steps; try { steps = JSON.parse(String(f.get("steps"))); } catch { throw new Error("Steps must be valid JSON"); } await api("save_template", { id: f.get("id"), name: f.get("name"), steps, completionCriteria:f.get("completionCriteria"), maxLoops:Number(f.get("maxLoops") || 1) }); await refresh(); await render(); });
+      openForm("New dispatch template", "Save template", input("id", "Template ID") + input("name", "Name") + '<label>Steps JSON<textarea name="steps" required>[{"agentId":"dave","handoff":"Deliver the result for the next step"}]</textarea></label>' + input("completionCriteria", "Completion criteria") + input("maxLoops", "Maximum loops", "number"), async f => { let steps; try { steps = JSON.parse(String(f.get("steps"))); } catch { throw new Error("Steps must be valid JSON"); } await api("save_template", { id: f.get("id"), name: f.get("name"), steps, completionCriteria:f.get("completionCriteria"), maxLoops:Number(f.get("maxLoops") || 1) }); await refresh(); await render(); });
       return;
     }
     if (action === "reset-session") {

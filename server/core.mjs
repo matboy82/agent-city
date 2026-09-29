@@ -258,6 +258,43 @@ export class Core {
     this.s.put("workflow", workflow);
     return true;
   }
+  removeAgent(agentId) {
+    const r = this.require("agent", agentId);
+    return (() => {
+      for (const p of this.s.list("pairing"))
+        if (p.agentId === r.id) this.s.remove("pairing", p.id);
+      for (const c of this.s.list("command"))
+        if (c.agentId === r.id) this.s.remove("command", c.id);
+      if (this.s.get("portrait", r.id)) this.s.remove("portrait", r.id);
+      for (const c of this.s.list("conversation"))
+        if (c.agentId === r.id) this.s.remove("conversation", c.id);
+      for (const m of this.s.list("message"))
+        if (m.agentId === r.id) this.s.remove("message", m.id);
+      for (const run of this.s.list("run"))
+        if (run.agentId === r.id) this.s.remove("run", run.id);
+      for (const w of this.s.list("work")) {
+        const raci = w.raci || {};
+        let changed = false;
+        for (const k of ["responsible", "consulted", "informed"])
+          if (Array.isArray(raci[k]) && raci[k].includes(r.id)) {
+            raci[k] = raci[k].filter((x) => x !== r.id);
+            changed = true;
+          }
+        if (changed) this.s.put("work", w);
+      }
+      for (const b of this.s.list("building"))
+        if (b.agentId === r.id && b.kind === "agent_hq")
+          this.s.remove("building", b.id);
+      this.s.remove("agent", r.id);
+      this.s.event("matt", "agent.removed", r.id, { name: r.name });
+      return { id: r.id, removed: true };
+    })();
+  }
+  retireLegacyAgents() {
+    // One-time succession cleanup: Jeff was retired 2026-09-28 and replaced
+    // by Dave as Chief of Staff. Drop his lingering agent record on startup.
+    if (this.s.get("agent", "jeff")) this.s.tx(() => this.removeAgent("jeff"));
+  }
   enqueue(agentId, verb, workId, payload = {}, dedupe = id()) {
     const previous = this.s.commandByKey(dedupe);
     if (previous) return JSON.parse(previous);
@@ -558,10 +595,10 @@ export class Core {
         }
         case "create_pairing_code": {
           r = this.require("agent", b.agentId);
-          if (r.id !== "jeff")
+          if (r.id !== "dave")
             assert(
-              this.require("agent", "jeff").lastSeen,
-              "Connect Jeff first",
+              this.require("agent", "dave").lastSeen,
+              "Connect Dave first",
             );
           delete r.credentialHash;
           this.s.put("agent", r);
@@ -585,6 +622,11 @@ export class Core {
           for (const p of this.s.list("pairing"))
             if (p.agentId === r.id) this.s.remove("pairing", p.id);
           this.s.put("agent", r);
+          break;
+        }
+        case "remove_agent": {
+          assert(b.confirm === true, "Confirm removing this agent");
+          r = this.removeAgent(z.string().min(1).max(100).parse(b.agentId));
           break;
         }
         case "pause_agent": {

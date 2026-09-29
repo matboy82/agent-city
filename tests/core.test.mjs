@@ -28,7 +28,7 @@ function fixture() {
     });
     return { act, credential };
   };
-  const jeff = pair("jeff");
+  const dave = pair("dave");
   const create = () =>
     call("create_work_item", {
       title: "Verified mission",
@@ -36,7 +36,7 @@ function fixture() {
       priority: "normal",
       goalId: "monthly",
       raci: {
-        responsible: ["jeff"],
+        responsible: ["dave"],
         accountable: "matt",
         consulted: ["relay"],
         informed: ["jev"],
@@ -46,10 +46,10 @@ function fixture() {
     call("dispatch_work_item", {
       id: workId,
       revision: s.get("work", workId).revision,
-      agentId: "jeff",
+      agentId: "dave",
       idempotency_key: `dispatch:${workId}`,
     });
-  return { s, c, owner, call, pair, jeff, create, dispatch };
+  return { s, c, owner, call, pair, dave, create, dispatch };
 }
 test("owner auth, setup single use, private snapshot and logout", () => {
   const f = fixture();
@@ -64,7 +64,7 @@ test("owner auth, setup single use, private snapshot and logout", () => {
   );
   const snapshot = f.call("get_dashboard");
   assert.equal(snapshot.agents.length, 4);
-  assert(!JSON.stringify(snapshot).includes(f.jeff.credential));
+  assert(!JSON.stringify(snapshot).includes(f.dave.credential));
   assert(!JSON.stringify(snapshot).includes("credentialHash"));
   f.call("owner_logout");
   assert.throws(() => f.call("get_dashboard"), /Sign in/);
@@ -72,9 +72,9 @@ test("owner auth, setup single use, private snapshot and logout", () => {
 });
 test("heartbeat work queue and activity are exposed on the agent snapshot", () => {
   const f = fixture();
-  f.jeff.act("report_heartbeat", {
-    agent_id: "jeff",
-    runtime_id: "hermes-jeff",
+  f.dave.act("report_heartbeat", {
+    agent_id: "dave",
+    runtime_id: "hermes-dave",
     sequence: 1,
     status: "active",
     last_seen: new Date().toISOString(),
@@ -83,7 +83,7 @@ test("heartbeat work queue and activity are exposed on the agent snapshot", () =
     activity: [{ summary: "Started proposal", detail: "For Friday review", time: new Date().toISOString(), source_key: "activity-1" }],
     queue: [{ text: "Review Q4 plan", detail: "Check numbers", time: "2026-09-30T09:00:00Z", source_key: "queue-1" }],
   });
-  const agent = f.call("get_dashboard").agents.find((a) => a.id === "jeff");
+  const agent = f.call("get_dashboard").agents.find((a) => a.id === "dave");
   assert.equal(agent.currentTask, "Drafting a proposal");
   assert.equal(agent.activity, "typing");
   assert.equal(agent.workQueue[0].text, "Review Q4 plan");
@@ -99,30 +99,30 @@ test("dispatch is idempotent and command/run/work states are distinct", () => {
   assert.equal(f.dispatch(w).id, command.id);
   assert.equal(f.s.get("work", w).status, "ready");
   assert.equal(f.s.list("run").length, 0);
-  const accepted = f.jeff.act("ack_command", {
+  const accepted = f.dave.act("ack_command", {
     command_id: command.id,
     status: "accepted",
   });
   assert.equal(f.s.get("work", w).status, "claimed");
   assert.equal(f.s.list("run").length, 1);
   assert.equal(
-    f.jeff.act("ack_command", { command_id: command.id, status: "accepted" })
+    f.dave.act("ack_command", { command_id: command.id, status: "accepted" })
       .id,
     command.id,
   );
-  f.jeff.act("ack_command", {
+  f.dave.act("ack_command", {
     command_id: command.id,
     status: "running",
     run_id: accepted.runId,
   });
   assert.equal(f.s.get("work", w).status, "in_progress");
-  f.jeff.act("submit_artifact", {
+  f.dave.act("submit_artifact", {
     run_id: accepted.runId,
     idempotency_key: "artifact-one",
     title: "Evidence",
     uri: "https://example.com/evidence",
   });
-  f.jeff.act("ack_command", {
+  f.dave.act("ack_command", {
     command_id: command.id,
     status: "completed",
     run_id: accepted.runId,
@@ -182,12 +182,12 @@ test("review loop sends reviewer feedback back to implementation until its loop 
 });
 test("resetting a conversation session clears its runtime ID and stale hash warning", () => {
   const f = fixture();
-  const conversation = f.call("start_agent_conversation", { agentId:"jeff" });
-  const message = f.call("send_agent_message", { agentId:"jeff", conversationId:conversation.id, body:"hello" });
-  f.jeff.act("reply_message", { id:message.id, body:"hello", runtimeSessionId:"session-old", instructionHash:"a".repeat(64) });
-  f.jeff.act("report_heartbeat", { agent_id:"jeff", runtime_id:"hermes-jeff", sequence:1, status:"idle", last_seen:new Date().toISOString(), capabilities:["work.execute"], instruction_hash:"b".repeat(64) });
-  assert.equal(f.call("get_dashboard").agents.find(a=>a.id==="jeff").staleSession, true);
-  f.call("reset_agent_session", { agentId:"jeff" });
+  const conversation = f.call("start_agent_conversation", { agentId:"dave" });
+  const message = f.call("send_agent_message", { agentId:"dave", conversationId:conversation.id, body:"hello" });
+  f.dave.act("reply_message", { id:message.id, body:"hello", runtimeSessionId:"session-old", instructionHash:"a".repeat(64) });
+  f.dave.act("report_heartbeat", { agent_id:"dave", runtime_id:"hermes-dave", sequence:1, status:"idle", last_seen:new Date().toISOString(), capabilities:["work.execute"], instruction_hash:"b".repeat(64) });
+  assert.equal(f.call("get_dashboard").agents.find(a=>a.id==="dave").staleSession, true);
+  f.call("reset_agent_session", { agentId:"dave" });
   assert.equal(f.s.get("conversation", conversation.id).runtimeSessionId, null);
   assert.equal(f.s.events().some(e=>e.type==="agent.session_reset"), true);
   f.s.close();
@@ -199,7 +199,7 @@ test("cannot skip acknowledgments, impersonate agent, or approve as agent", () =
     command = f.dispatch(w);
   assert.throws(
     () =>
-      f.jeff.act("ack_command", {
+      f.dave.act("ack_command", {
         command_id: command.id,
         status: "completed",
       }),
@@ -211,14 +211,14 @@ test("cannot skip acknowledgments, impersonate agent, or approve as agent", () =
     /another agent/,
   );
   assert.throws(
-    () => f.jeff.act("resolve_approval", {}),
+    () => f.dave.act("resolve_approval", {}),
     /Unknown agent action/,
   );
   assert.throws(
     () =>
-      f.jeff.act("report_heartbeat", {
+      f.dave.act("report_heartbeat", {
         agent_id: "relay",
-        runtime_id: "hermes-jeff",
+        runtime_id: "hermes-dave",
         sequence: 1,
         status: "idle",
         last_seen: new Date().toISOString(),
@@ -231,7 +231,7 @@ test("expired leases block recovery and cannot be renewed or completed late", ()
   const f = fixture(),
     w = f.create(),
     command = f.dispatch(w),
-    ack = f.jeff.act("ack_command", {
+    ack = f.dave.act("ack_command", {
       command_id: command.id,
       status: "accepted",
     });
@@ -243,21 +243,21 @@ test("expired leases block recovery and cannot be renewed or completed late", ()
   assert.equal(f.s.get("command", command.id).status, "expired");
   assert.throws(
     () =>
-      f.jeff.act("ack_command", { command_id: command.id, status: "running" }),
+      f.dave.act("ack_command", { command_id: command.id, status: "running" }),
     /terminal/,
   );
   f.s.close();
 });
 test("pairing one use, ten-minute expiry, immediate revocation", () => {
   const f = fixture();
-  const code = f.call("create_pairing_code", { agentId: "jeff" }).code;
-  assert.throws(() => f.jeff.act("poll_commands"), /revoked/);
+  const code = f.call("create_pairing_code", { agentId: "dave" }).code;
+  assert.throws(() => f.dave.act("poll_commands"), /revoked/);
   f.c.public("redeem_pairing_code", { code, runtime_id: "new" });
   assert.throws(
     () => f.c.public("redeem_pairing_code", { code, runtime_id: "new" }),
     /already used/,
   );
-  const next = f.call("create_pairing_code", { agentId: "jeff" });
+  const next = f.call("create_pairing_code", { agentId: "dave" });
   for (const p of f.s.list("pairing")) f.s.put("pairing", { ...p, expires: 0 });
   assert.throws(
     () =>
@@ -347,22 +347,22 @@ test("office strict validation, owner precedence and stale write protection", ()
     palette: "warm",
     placements: [{ slot: "primary_desk", asset_id: "kenney.desk" }],
   };
-  f.call("save_office_design", { agentId: "jeff", revision: 0, design: d });
+  f.call("save_office_design", { agentId: "dave", revision: 0, design: d });
   assert.throws(
     () =>
-      f.call("save_office_design", { agentId: "jeff", revision: 0, design: d }),
+      f.call("save_office_design", { agentId: "dave", revision: 0, design: d }),
     /changed/,
   );
   assert.throws(() =>
     f.call("save_office_design", {
-      agentId: "jeff",
+      agentId: "dave",
       revision: 1,
       design: { ...d, evil: true },
     }),
   );
   assert.throws(() =>
     f.call("save_office_design", {
-      agentId: "jeff",
+      agentId: "dave",
       revision: 1,
       design: {
         ...d,
@@ -370,16 +370,16 @@ test("office strict validation, owner precedence and stale write protection", ()
       },
     }),
   );
-  f.jeff.act("report_heartbeat", {
-    agent_id: "jeff",
-    runtime_id: "hermes-jeff",
+  f.dave.act("report_heartbeat", {
+    agent_id: "dave",
+    runtime_id: "hermes-dave",
     sequence: 1,
     status: "idle",
     last_seen: new Date().toISOString(),
     office_design: { ...d, theme: "neutral" },
   });
   assert.equal(
-    f.call("get_dashboard").agents.find((a) => a.id === "jeff").effectiveDesign
+    f.call("get_dashboard").agents.find((a) => a.id === "dave").effectiveDesign
       .theme,
     "cozy_den",
   );
@@ -413,33 +413,33 @@ test("global stop, policy gate, stale RACI and BIS scope", () => {
 test("private messages have explicit queued, delivered, acknowledged and replied states", () => {
   const f = fixture();
   const m = f.call("send_agent_message", {
-    agentId: "jeff",
+    agentId: "dave",
     body: "A private instruction",
   });
   assert.equal(f.s.get("message", m.id).status, "queued");
-  const c = f.jeff.act("poll_commands")[0];
-  f.jeff.act("ack_command", { command_id: c.id, status: "accepted" });
+  const c = f.dave.act("poll_commands")[0];
+  f.dave.act("ack_command", { command_id: c.id, status: "accepted" });
   assert.equal(f.s.get("message", m.id).status, "delivered");
-  f.jeff.act("ack_command", { command_id: c.id, status: "running" });
+  f.dave.act("ack_command", { command_id: c.id, status: "running" });
   assert.equal(f.s.get("message", m.id).status, "acknowledged");
-  f.jeff.act("reply_message", { id: m.id, body: "Received" });
+  f.dave.act("reply_message", { id: m.id, body: "Received" });
   assert.equal(f.s.get("message", m.id).status, "replied");
   f.s.close();
 });
 test("private conversation sessions resume only their own agent and serialize turns", () => {
   const f = fixture();
-  const first = f.call("start_agent_conversation", { agentId: "jeff" });
-  const message = f.call("send_agent_message", { agentId: "jeff", conversationId: first.id, body: "Hello" });
-  assert.throws(() => f.call("send_agent_message", { agentId: "jeff", conversationId: first.id, body: "Too soon" }), /Wait for the current reply/);
+  const first = f.call("start_agent_conversation", { agentId: "dave" });
+  const message = f.call("send_agent_message", { agentId: "dave", conversationId: first.id, body: "Hello" });
+  assert.throws(() => f.call("send_agent_message", { agentId: "dave", conversationId: first.id, body: "Too soon" }), /Wait for the current reply/);
   assert.throws(() => f.call("send_agent_message", { agentId: "relay", conversationId: first.id, body: "Wrong agent" }), /another agent/);
-  const command = f.jeff.act("poll_commands")[0];
+  const command = f.dave.act("poll_commands")[0];
   assert.equal(command.payload.runtimeSessionId, null);
-  f.jeff.act("reply_message", { id: message.id, body: "Hi", runtimeSessionId: "hermes-session-1" });
-  const next = f.call("send_agent_message", { agentId: "jeff", conversationId: first.id, body: "Continue" });
+  f.dave.act("reply_message", { id: message.id, body: "Hi", runtimeSessionId: "hermes-session-1" });
+  const next = f.call("send_agent_message", { agentId: "dave", conversationId: first.id, body: "Continue" });
   const queued = f.s.list("command").find((c) => c.payload?.messageId === next.id);
   assert.equal(queued.payload.runtimeSessionId, "hermes-session-1");
-  const fresh = f.call("start_agent_conversation", { agentId: "jeff" });
-  const newMessage = f.call("send_agent_message", { agentId: "jeff", conversationId: fresh.id, body: "New topic" });
+  const fresh = f.call("start_agent_conversation", { agentId: "dave" });
+  const newMessage = f.call("send_agent_message", { agentId: "dave", conversationId: fresh.id, body: "New topic" });
   const freshCommand = f.s.list("command").find((c) => c.payload?.messageId === newMessage.id);
   assert.equal(freshCommand.payload.runtimeSessionId, null);
   assert.equal(f.call("get_dashboard").conversations.length, 2);
@@ -449,14 +449,14 @@ test("handoff preserves accountability and changes ownership only on destination
   const f = fixture(),
     relay = f.pair("relay"),
     w = f.create();
-  const h = f.jeff.act("request_handoff", {
+  const h = f.dave.act("request_handoff", {
     workId: w,
     to: "relay",
     context: "BIS reference and evidence",
     idempotency_key: "handoff-test",
   });
   f.call("accept_handoff", { id: h.id, accept: true });
-  assert.deepEqual(f.s.get("work", w).raci.responsible, ["jeff"]);
+  assert.deepEqual(f.s.get("work", w).raci.responsible, ["dave"]);
   const command = relay.act("poll_commands")[0];
   for (const status of ["accepted", "running", "completed"])
     relay.act("ack_command", { command_id: command.id, status });
@@ -469,10 +469,10 @@ test("expired delivery and handoff release pending state without transferring ow
   f.pair("relay");
   const w = f.create();
   const m = f.call("send_agent_message", {
-    agentId: "jeff",
+    agentId: "dave",
     body: "Pending note",
   });
-  const h = f.jeff.act("request_handoff", {
+  const h = f.dave.act("request_handoff", {
     workId: w,
     to: "relay",
     context: "Review context",
@@ -487,7 +487,7 @@ test("expired delivery and handoff release pending state without transferring ow
   assert.equal(f.s.get("message", m.id).status, "expired");
   assert.equal(f.s.get("handoff", h.id).status, "expired");
   assert.equal(f.s.get("work", w).transferPending, undefined);
-  assert.deepEqual(f.s.get("work", w).raci.responsible, ["jeff"]);
+  assert.deepEqual(f.s.get("work", w).raci.responsible, ["dave"]);
   assert.equal(f.s.get("work", w).status, "blocked");
   f.s.close();
 });
@@ -500,7 +500,7 @@ test("a fresh idempotency key cannot create duplicate queued execution", () => {
       f.call("dispatch_work_item", {
         id: w,
         revision: f.s.get("work", w).revision,
-        agentId: "jeff",
+        agentId: "dave",
         idempotency_key: "a-new-key-for-same-work",
       }),
     /pending command/,
@@ -517,7 +517,7 @@ test("redirection invalidates old policy approval and queues a fresh review", ()
     goalId: "monthly",
     action: "publish",
     raci: {
-      responsible: ["jeff"],
+      responsible: ["dave"],
       accountable: "matt",
       consulted: [],
       informed: [],
@@ -744,5 +744,60 @@ test("HQ building and desk placements persist with revision and clearance checks
   assert.throws(() => f.call("save_hq", { revision: 2, zones: { missions: [8, 0, 0] } }), /too_big|less than or equal/);
   const occupied = f.s.list("building")[0];
   assert.throws(() => f.call("save_hq", { revision: 2, position: [occupied.x, 0, occupied.z] }), /clear/);
+  f.s.close();
+});
+test("remove_agent cleans up the agent record and its references", () => {
+  const f = fixture();
+  f.s.put("agent", { id: "doomed", name: "Doomed", role: "Redundant", theme: "neutral", status: "idle", lastSeen: null, paused: false, revision: 0, sequence: -1, capabilities: [] });
+  const doomed = f.pair("doomed");
+  doomed.act("report_heartbeat", {
+    agent_id: "doomed",
+    runtime_id: "hermes-doomed",
+    sequence: 1,
+    status: "idle",
+    last_seen: new Date().toISOString(),
+    capabilities: ["work.execute"],
+    avatar_image: {
+      mime_type: "image/png",
+      data_base64:
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    },
+  });
+  const wid = f.call("create_work_item", {
+    title: "Doomed mission",
+    brief: "Nothing to see here",
+    priority: "low",
+    goalId: "monthly",
+    raci: {
+      responsible: ["doomed", "dave"],
+      accountable: "matt",
+      consulted: ["doomed"],
+      informed: [],
+    },
+  }).id;
+  assert.throws(() => f.call("remove_agent", { agentId: "doomed" }), /Confirm/);
+  const out = f.call("remove_agent", { agentId: "doomed", confirm: true });
+  assert.equal(out.id, "doomed");
+  assert.equal(f.s.get("agent", "doomed"), null);
+  assert.equal(f.s.get("portrait", "doomed"), null);
+  assert.equal(
+    f.s.list("command").filter((c) => c.agentId === "doomed").length,
+    0,
+  );
+  assert.equal(
+    f.s.list("conversation").filter((c) => c.agentId === "doomed").length,
+    0,
+  );
+  assert.equal(f.s.list("run").filter((r) => r.agentId === "doomed").length, 0);
+  const w = f.s.get("work", wid);
+  assert.deepEqual(w.raci.responsible, ["dave"]);
+  assert.deepEqual(w.raci.consulted, []);
+  const events = f.s.events("agent.removed", 0);
+  assert.ok(events.some((e) => e.entity === "doomed"));
+  f.s.close();
+});
+test("pairing gate follows the sitting chief of staff", () => {
+  const f = fixture();
+  assert.doesNotThrow(() => f.pair("relay"));
   f.s.close();
 });

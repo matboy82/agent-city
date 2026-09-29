@@ -41,8 +41,8 @@ export class Store {
         });
         const crew = [
           [
-            "jeff",
-            "Jeff",
+            "dave",
+            "Dave",
             "Chief of staff",
             "The War Room",
             "command_center",
@@ -94,7 +94,7 @@ export class Store {
             sequence: -1,
             capabilities: [],
             activity: "idle",
-            avatar: ["jeff", "relay"].includes(key)
+            avatar: ["dave", "relay"].includes(key)
               ? `/assets/${key}.png`
               : null,
           });
@@ -119,14 +119,14 @@ export class Store {
         });
         for (const template of [
           { id: "review_loop", name: "Review loop", steps: [{agentId:"nerby",handoff:"Implementation result"},{agentId:"chad",handoff:"Review findings"}], completionCriteria:"Reviewer approves", maxLoops:3 },
-          { id: "crew_briefing", name: "Crew briefing", steps: [{agentId:"jeff",handoff:"Collected updates"},{agentId:"jev",handoff:"Red team assessment"},{agentId:"jeff",handoff:"Final briefing"}], completionCriteria:"Briefing delivered", maxLoops:1 },
+          { id: "crew_briefing", name: "Crew briefing", steps: [{agentId:"dave",handoff:"Collected updates"},{agentId:"jev",handoff:"Red team assessment"},{agentId:"dave",handoff:"Final briefing"}], completionCriteria:"Briefing delivered", maxLoops:1 },
           { id: "lead_triage", name: "Lead triage", steps: [{agentId:"jev",handoff:"Score and rationale"},{agentId:"relay",handoff:"Draft outreach"},{agentId:"relay",handoff:"Approval queue"}], completionCriteria:"Draft queued for owner approval", maxLoops:1 },
         ]) this.put("template", template);
       });
     this.tx(() => {
         for (const template of [
           { id: "review_loop", name: "Review loop", steps: [{agentId:"nerby",handoff:"Implementation result"},{agentId:"chad",handoff:"Review findings"}], completionCriteria:"Reviewer approves", maxLoops:3 },
-          { id: "crew_briefing", name: "Crew briefing", steps: [{agentId:"jeff",handoff:"Collected updates"},{agentId:"jev",handoff:"Red team assessment"},{agentId:"jeff",handoff:"Final briefing"}], completionCriteria:"Briefing delivered", maxLoops:1 },
+          { id: "crew_briefing", name: "Crew briefing", steps: [{agentId:"dave",handoff:"Collected updates"},{agentId:"jev",handoff:"Red team assessment"},{agentId:"dave",handoff:"Final briefing"}], completionCriteria:"Briefing delivered", maxLoops:1 },
           { id: "lead_triage", name: "Lead triage", steps: [{agentId:"jev",handoff:"Score and rationale"},{agentId:"relay",handoff:"Draft outreach"},{agentId:"relay",handoff:"Approval queue"}], completionCriteria:"Draft queued for owner approval", maxLoops:1 },
         ]) if (!this.get("template", template.id)) this.put("template", template);
       });

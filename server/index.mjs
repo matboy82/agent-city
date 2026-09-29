@@ -12,6 +12,7 @@ export async function createApp({
   const store = new Store(dbPath),
     core = new Core(store),
     scheduler = new Scheduler(core);
+  core.retireLegacyAgents();
   const vite = dev
     ? await (
         await import("vite")

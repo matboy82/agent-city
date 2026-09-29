@@ -74,8 +74,8 @@ function modelBytes(path: string) {
   return p;
 }
 let cityCamera: [number, number, number, number, number, number] | null = null;
-const profileAvatars = new Set(["angela", "arthur", "calvin", "chad", "irene", "jeff", "jefferson", "jonathan", "mark", "nerby", "opal", "proctor", "rachel", "sally", "steve", "ted", "triton", "video", "zack"]);
-const characterPath = (id: string) => `/assets/characters/${["jeff", "relay", "jev"].includes(id) ? id : profileAvatars.has(id) ? `profile-${id}` : "neutral"}.glb?v=${__CHARACTER_ASSET_VERSION__}`;
+const profileAvatars = new Set(["angela", "arthur", "calvin", "chad", "irene", "jefferson", "jonathan", "mark", "nerby", "opal", "proctor", "rachel", "sally", "steve", "ted", "triton", "video", "zack"]);
+const characterPath = (id: string) => `/assets/characters/${["dave", "relay", "jev"].includes(id) ? id : profileAvatars.has(id) ? `profile-${id}` : "neutral"}.glb?v=${__CHARACTER_ASSET_VERSION__}`;
 export async function mountWorld(
   canvas: HTMLCanvasElement,
   opts: {

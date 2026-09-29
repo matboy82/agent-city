@@ -73,7 +73,7 @@ test("canary requires Nerby and either 24 elapsed hours or five completed dispat
   assert.equal(canaryStatus(c, start + 1000).promoteAllowed, false);
   c.mattPromotionApproved = true;
   assert.equal(canaryStatus(c, start + 1000).promoteAllowed, true);
-  assert.equal(canaryStatus({ ...c, agentId: "jeff" }, start + 1000).promoteAllowed, false);
+  assert.equal(canaryStatus({ ...c, agentId: "dave" }, start + 1000).promoteAllowed, false);
   assert.equal(canaryStatus({ ...c, status: "failed" }, start + 1000).promoteAllowed, false);
 });
 
@@ -85,14 +85,14 @@ test("upgrade and capability changes create version-specific Matt approvals and 
     assert.equal(approval.targetId, upgrade.id);
     assert.match(approval.title, /v0\.22\.0/);
     assert.equal(upgrade.executionAllowed, false);
-    const change = core.harness.requestCapabilityChange({ profileId: "jeff", capability: "research", version: "1.2.0", operation: "install" });
+    const change = core.harness.requestCapabilityChange({ profileId: "dave", capability: "research", version: "1.2.0", operation: "install" });
     assert.equal(store.get("approval", change.approvalId).status, "waiting");
-    const p1 = core.harness.setPin("jeff", "research", "1.2.0");
+    const p1 = core.harness.setPin("dave", "research", "1.2.0");
     const p2 = core.harness.setPin("relay", "research", "2.0.0");
     assert.notEqual(p1.id, p2.id);
-    assert.equal(store.get("capability_pin", p1.id).profileId, "jeff");
+    assert.equal(store.get("capability_pin", p1.id).profileId, "dave");
     assert.equal(store.get("capability_pin", p2.id).version, "2.0.0");
-    assert.throws(() => core.harness.requestCapabilityChange({ profileId: "jeff", capability: "research", version: "1.2.0", operation: "invalid" }), /Invalid capability operation/);
+    assert.throws(() => core.harness.requestCapabilityChange({ profileId: "dave", capability: "research", version: "1.2.0", operation: "invalid" }), /Invalid capability operation/);
   } finally { store.close(); }
 });
 
@@ -103,14 +103,14 @@ test("owner request, approval, and dashboard flows stay staged and profile-scope
     const token = core.public("owner_setup", { passphrase, confirm: passphrase }).token;
     const act = (name, input = {}) => core.ownerAction(name, input, token);
     const upgradeRequest = act("request_runtime_upgrade", { version: "v0.22.0" });
-    const capabilityRequest = act("request_capability_change", { profileId: "jeff", capability: "research", version: "1.2.0", operation: "install" });
+    const capabilityRequest = act("request_capability_change", { profileId: "dave", capability: "research", version: "1.2.0", operation: "install" });
     const requested = act("get_dashboard");
     const upgrade = requested.harness.upgrades.find(x => x.id === upgradeRequest.id);
     const capability = requested.harness.installs.find(x => x.id === capabilityRequest.id);
     for (const id of [upgrade.approvalId, capability.approvalId]) act("resolve_approval", { id, decision: "approved", note: "Approved for staged preparation only." });
-    act("set_capability_pin", { profileId: "jeff", capability: "research", version: "1.2.0" });
+    act("set_capability_pin", { profileId: "dave", capability: "research", version: "1.2.0" });
     act("set_capability_pin", { profileId: "relay", capability: "research", version: "2.0.0" });
-    act("scan_capabilities", { items: [{ profileId: "jeff", capability: "research" }, { profileId: "relay", capability: "research" }] });
+    act("scan_capabilities", { items: [{ profileId: "dave", capability: "research" }, { profileId: "relay", capability: "research" }] });
     const scan = act("get_dashboard").harness.scans[0];
     assert.deepEqual(scan.items.map(x => x.pinned.version), ["1.2.0", "2.0.0"]);
     act("record_harness_health", { status: "warning", checks: { ledger: "unavailable" } });

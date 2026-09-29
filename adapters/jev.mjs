@@ -25,7 +25,7 @@ function defaultQuestions(work) {
       type: "choice",
       instructions: `Who should handle this? Title: ${title}. Detail: ${detail}`,
       criteria: {
-        jeff: "Chief of staff — substantive analysis, planning, coordination",
+        dave: "Chief of staff — substantive analysis, planning, coordination",
         relay: "Relay — quick ops, inbox, research, follow-ups",
         specialists: "A specialist agent — domain-specific deep work",
         matt: "Needs Matt's direct decision or input",
